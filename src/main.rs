@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 mod arrary;
+mod string;
 
 trait IpAddr {
     fn diplay(&self);
@@ -23,5 +24,7 @@ impl IpAddr for V6 {
 }
 
 fn main() {
-    panic!("crash and burn");
+    let ip = V4("198.168.31.91".to_string());
+    ip.diplay();
+    // panic!("crash and burn");
 }
