@@ -5,7 +5,59 @@ use std::cmp::min;
 struct Solution {}
 
 impl Solution {
-    pub fn merge_alternately(mut word1: String, mut word2: String) -> String {
+    pub fn merge_alternately(word1: String, word2: String) -> String {
+        let (n1, n2) = (word1.chars().count(), word2.chars().count());
+
+        word1
+            .chars()
+            .zip(word2.chars())
+            .flat_map(|(a, b)| [a, b])
+            .chain(word1.chars().skip(n2))
+            .chain(word2.chars().skip(n1))
+            .collect()
+    }
+
+    pub fn merge_alternately_4(word1: String, word2: String) -> String {
+        let mut result = String::with_capacity(word1.len() + word2.len());
+        let mut chars1 = word1.chars();
+        let mut chars2 = word2.chars();
+
+        loop {
+            let (c1, c2) = (chars1.next(), chars2.next());
+            if c1.is_none() && c2.is_none() {
+                break;
+            }
+
+            if let Some(c) = c1 {
+                result.push(c);
+            }
+
+            if let Some(c) = c2 {
+                result.push(c);
+            }
+        }
+
+        result
+    }
+
+    pub fn merge_alternately_3(word1: String, word2: String) -> String {
+        let (a, b) = (word1.as_bytes(), word2.as_bytes());
+        let mut result = Vec::with_capacity(a.len() + b.len());
+
+        for i in 0..a.len().max(b.len()) {
+            if let Some(&c) = a.get(i) {
+                result.push(c);
+            }
+
+            if let Some(&c) = b.get(i) {
+                result.push(c);
+            }
+        }
+
+        String::from_utf8(result).expect("ASCII only")
+    }
+
+    pub fn merge_alternately_2(mut word1: String, mut word2: String) -> String {
         let len = min(word1.len(), word2.len());
         let mut result = String::with_capacity(word1.len() + word2.len());
 

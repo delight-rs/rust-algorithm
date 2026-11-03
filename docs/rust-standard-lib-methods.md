@@ -1,0 +1,535 @@
+# Rust 常用 API 笔记：字符串与迭代器
+
+> 主题：`String` / `&str`、迭代器适配器、`Option` / `Result`、`Vec` / slice 的常用方法与易混点。
+> 示例都是最小片段，可以直接粘进 `#[test]` 里运行。
+
+## 1. `String` 与 `&str`
+
+### 1.1 两个类型的关系
+
+| 类型     | 所有权 | 说明                                     |
+| -------- | ------ | ---------------------------------------- |
+| `String` | 拥有   | 堆上的 UTF-8 缓冲区，可增长              |
+| `&str`   | 借用   | 指向某段 UTF-8 数据的胖指针（ptr + len） |
+
+`String` 实现了 `Deref<Target = str>`，所以 `&String` 能自动转成 `&str`：
+
+```rust
+fn takes_str(s: &str) -> usize {
+    s.len()
+}
+
+let owned = String::from("hi");
+takes_str(&owned);                       // &String -> &str
+let slice: &str = owned.as_str();        // 显式取切片
+assert_eq!(slice, "hi");
+```
+
+相关 trait：`AsRef<str>`、`Borrow<str>`，写泛型参数时常用：
+
+```rust
+fn takes_any(s: impl AsRef<str>) -> usize {
+    s.as_ref().len()
+}
+
+assert_eq!(takes_any("hi"), 2);
+assert_eq!(takes_any(String::from("hi")), 2);
+```
+
+### 1.2 字节长度 vs 字符数量
+
+`len()` 返回**字节数**，`chars().count()` 返回**字符数**：
+
+```rust
+let s = "héllo";
+assert_eq!(s.len(), 6);           // h + é(2 字节) + l + l + o
+assert_eq!(s.chars().count(), 5); // 5 个 char
+```
+
+| 表达式              | 含义               | 复杂度 |
+| ------------------- | ------------------ | ------ |
+| `s.len()`           | 字节数             | O(1)   |
+| `s.is_empty()`      | 是否为空           | O(1)   |
+| `s.chars().count()` | 字符数             | O(n)   |
+| `s.capacity()`      | 已分配容量（字节） | O(1)   |
+
+### 1.3 UTF-8 与下标
+
+`String` **没有**实现 `Index<usize>`，不能写 `s[0]`：
+
+```rust
+let s = String::from("héllo");
+// let c = s[0];              // 编译错误
+let first = s.chars().next(); // Some('h')
+let first_byte = s.as_bytes()[0]; // b'h'
+```
+
+切片语法 `&s[a..b]` 用的是**字节**下标，且必须落在字符边界上，否则 panic。安全版本是 `get`：
+
+```rust
+let s = "héllo";
+assert_eq!(s.get(0..1), Some("h"));
+assert_eq!(s.get(0..2), None);     // 2 不是字符边界
+assert!(!s.is_char_boundary(2));
+```
+
+## 2. 字符串的创建与容量
+
+| API                                | 说明                                  |
+| ---------------------------------- | ------------------------------------- |
+| `String::new()`                    | 空串，不分配                          |
+| `String::from("...")`              | 从 `&str` 复制                        |
+| `"".to_string()` / `"".to_owned()` | 同上，写法不同                        |
+| `String::with_capacity(n)`         | 预分配至少 n **字节**                 |
+| `reserve(n)` / `reserve_exact(n)`  | 额外预留 n 字节（精确版本不超额分配） |
+| `shrink_to_fit()`                  | 把容量收缩到当前长度                  |
+| `String::from_utf8(vec)`           | 校验并接管 `Vec<u8>`                  |
+| `String::from_utf8_lossy(&[u8])`   | 非法字节替换为 U+FFFD，不报错         |
+| `into_bytes()`                     | 反向拆成 `Vec<u8>`，不复制            |
+
+```rust
+let mut s = String::with_capacity(16);
+assert!(s.capacity() >= 16);
+
+s.push_str("hello");
+s.reserve(32);
+assert!(s.capacity() >= 37); // 5 + 32
+assert_eq!(s.len(), 5);
+
+let bytes = vec![b'h', b'i'];
+let from_bytes = String::from_utf8(bytes).unwrap();
+assert_eq!(from_bytes, "hi");
+
+assert!(String::from_utf8(vec![0xC3]).is_err());        // 截断的 UTF-8
+assert_eq!(String::from_utf8_lossy(&[0xC3]), "\u{FFFD}");
+```
+
+## 3. 字符串的修改
+
+| API                                       | 说明                                    | 复杂度    |
+| ----------------------------------------- | --------------------------------------- | --------- |
+| `push(char)`                              | 追加一个字符                            | 均摊 O(1) |
+| `push_str(&str)`                          | 追加字符串切片                          | 均摊 O(1) |
+| `extend(iter)`                            | 追加字符/字符串迭代器                   | 均摊 O(1) |
+| `s += "..."`                              | 依赖 `AddAssign<&str>`                  | 均摊 O(1) |
+| `insert(i, char)` / `insert_str(i, &str)` | 在字节位置插入，要求字符边界            | O(n)      |
+| `replace_range(range, &str)`              | 替换字节范围                            | O(n)      |
+| `truncate(len)`                           | 截断到指定字节长度，要求字符边界        | O(1)      |
+| `pop()`                                   | 删除并返回最后一个字符，`Option<char>`  | O(1)      |
+| `remove(i)`                               | 删除并返回位置 i 处的字符，后续字节左移 | O(n)      |
+| `drain(range)`                            | 删除范围并返回迭代器                    | O(n)      |
+| `retain(f)`                               | 按字符过滤                              | O(n)      |
+| `clear()`                                 | 清空内容，保留容量                      | O(1)      |
+| `split_off(i)`                            | 从 i 处拆成两个 `String`                | O(n)      |
+
+```rust
+let mut s = String::new();
+s.push('a');
+s.push_str("bc");
+s.extend(['d', 'e']);
+s += "fg";
+assert_eq!(s, "abcdefg");
+
+let mut s = String::from("hello world");
+s.truncate(5);
+assert_eq!(s, "hello");
+
+let mut s = String::from("hello");
+assert_eq!(s.pop(), Some('o'));
+assert_eq!(s, "hell");
+assert_eq!(s.remove(0), 'h');
+assert_eq!(s, "ell");
+
+let mut s = String::from("hello");
+s.retain(|c| c != 'l');
+assert_eq!(s, "heo");
+
+let mut s = String::from("hello");
+let tail = s.split_off(2);
+assert_eq!(s, "he");
+assert_eq!(tail, "llo");
+
+let mut s = String::from("abcdef");
+let removed: String = s.drain(1..3).collect();
+assert_eq!(removed, "bc");
+assert_eq!(s, "adef");
+```
+
+注意 `remove` / `insert` / `truncate` 的下标都是**字节位置**，落在多字节字符中间会 panic：
+
+```rust
+let mut s = String::from("é");
+// s.remove(1);   // panic: byte index 1 is not a char boundary
+```
+
+## 4. 字符与字节遍历
+
+| API               | 产出            | 说明                                   |
+| ----------------- | --------------- | -------------------------------------- |
+| `chars()`         | `char`          | 按 UTF-8 解码逐字符                    |
+| `char_indices()`  | `(usize, char)` | 字符及其起始字节偏移                   |
+| `bytes()`         | `u8`            | 原始字节，不做解码                     |
+| `chars().rev()`   | `char`          | 反向，`Chars` 是 `DoubleEndedIterator` |
+| `Chars::as_str()` | `&str`          | 返回**尚未消费**的剩余片段             |
+
+```rust
+let mut chars = "hello".chars();
+assert_eq!(chars.next(), Some('h'));
+assert_eq!(chars.as_str(), "ello"); // 剩余部分
+
+let s = "hello";
+assert_eq!(s.chars().rev().collect::<String>(), "olleh");
+assert_eq!(s.bytes().count(), 5);
+
+let offsets: Vec<(usize, char)> = "aé中".char_indices().collect();
+assert_eq!(offsets, vec![(0, 'a'), (1, 'é'), (3, '中')]);
+```
+
+`char` 在内存里固定占 4 字节，但写入 UTF-8 字符串时只占 1~4 字节：
+
+```rust
+assert_eq!('a'.len_utf8(), 1);
+assert_eq!('é'.len_utf8(), 2);
+assert_eq!('中'.len_utf8(), 3);
+assert_eq!(std::mem::size_of::<char>(), 4);
+```
+
+## 5. 迭代器
+
+### 5.1 惰性
+
+适配器只是"描述"，不消费就不执行：
+
+```rust
+let v = vec![1, 2, 3];
+let iter = v.iter().map(|x| {
+    println!("计算 {x}");
+    x * 2
+});
+// 这里不会打印任何内容
+let doubled: Vec<i32> = iter.collect(); // 此刻才逐个求值
+assert_eq!(doubled, vec![2, 4, 6]);
+```
+
+### 5.2 常用适配器
+
+| 分类 | 方法                                          | 说明                                       |
+| ---- | --------------------------------------------- | ------------------------------------------ |
+| 变换 | `map`                                         | 一对一                                     |
+| 变换 | `flat_map`                                    | 一对一后展平（`map(f).flatten()` 的简写）  |
+| 变换 | `flatten`                                     | 元素本身可迭代时展平                       |
+| 变换 | `filter` / `filter_map`                       | 过滤 / 过滤并变换（返回 `Option`）         |
+| 变换 | `inspect`                                     | 只观察，不改变元素，调试用                 |
+| 截取 | `take(n)` / `take_while(f)`                   | 取前 n 个 / 取到条件不满足为止             |
+| 截取 | `skip(n)` / `skip_while(f)`                   | 跳过前 n 个 / 跳过到条件不满足为止         |
+| 截取 | `step_by(n)`                                  | 隔 n 个取一个                              |
+| 组合 | `zip(other)`                                  | 并行配对，长度取较短者                     |
+| 组合 | `chain(other)`                                | 串行拼接，产出全部                         |
+| 组合 | `rev()`                                       | 反向（需 `DoubleEndedIterator`）           |
+| 组合 | `enumerate()`                                 | 附带下标                                   |
+| 组合 | `peekable()` / `peek()`                       | 预读                                       |
+| 借用 | `by_ref()`                                    | 返回 `&mut Iterator`，用于部分消费后继续用 |
+| 消费 | `collect()` / `count()` / `last()` / `nth(n)` | 收集 / 计数 / 最后一个 / 第 n 个           |
+| 消费 | `fold(init, f)` / `reduce(f)` / `for_each(f)` | 累积 / 归约 / 逐项执行                     |
+
+```rust
+let doubled: Vec<i32> = vec![1, 2, 3].into_iter().map(|x| x * 2).collect();
+assert_eq!(doubled, vec![2, 4, 6]);
+
+let words = ["ab", "cd"];
+let letters: String = words.iter().flat_map(|w| w.chars()).collect();
+assert_eq!(letters, "abcd");
+
+let flat: Vec<i32> = vec![vec![1, 2], vec![3]].into_iter().flatten().collect();
+assert_eq!(flat, vec![1, 2, 3]);
+
+let evens: Vec<i32> = (1..10).filter(|x| x % 2 == 0).collect();
+assert_eq!(evens, vec![2, 4, 6, 8]);
+
+let parsed: Vec<i32> = ["1", "x", "3"]
+    .iter()
+    .filter_map(|s| s.parse().ok())
+    .collect();
+assert_eq!(parsed, vec![1, 3]);
+
+let sum = (1..=5).fold(0, |acc, x| acc + x);
+assert_eq!(sum, 15);
+```
+
+### 5.3 `zip` 与 `chain`
+
+```rust
+let pairs: Vec<(i32, &str)> = [1, 2, 3].iter().copied().zip(["a", "b"]).collect();
+assert_eq!(pairs, vec![(1, "a"), (2, "b")]); // 长度取较短者
+
+let all: Vec<i32> = [1, 2].iter().copied().chain([3, 4]).collect();
+assert_eq!(all, vec![1, 2, 3, 4]); // 全部拼接
+```
+
+标准库没有 `zip_longest`。需要"取较长者"时可以用 `std::iter::from_fn` 自己写：
+
+```rust
+use std::iter::from_fn;
+
+fn zip_longest<A, B>(a: A, b: B) -> impl Iterator<Item = (Option<A::Item>, Option<B::Item>)>
+where
+    A: Iterator,
+    B: Iterator,
+{
+    let (mut a, mut b) = (a, b);
+    from_fn(move || {
+        let pair = (a.next(), b.next());
+        (pair.0.is_some() || pair.1.is_some()).then_some(pair)
+    })
+}
+
+let merged: Vec<i32> = zip_longest([1, 2].into_iter(), [10, 20, 30].into_iter())
+    .flat_map(|(x, y)| x.into_iter().chain(y))
+    .collect();
+assert_eq!(merged, vec![1, 10, 2, 20, 30]);
+```
+
+这里用到了 `Option<T>: IntoIterator`：`Some(x)` 产出 1 个元素，`None` 产出 0 个。所以 `Option` 也能直接传给 `extend` / `chain` / `flatten`。
+
+### 5.4 `skip` / `take` / `by_ref`
+
+```rust
+let picked: Vec<i32> = (1..=10).skip(3).take(2).collect();
+assert_eq!(picked, vec![4, 5]);
+
+let third = (1..=10).nth(2);
+assert_eq!(third, Some(3));
+
+let mut it = 1..=5;
+let head: Vec<i32> = it.by_ref().take(2).collect();
+let rest: Vec<i32> = it.collect();
+assert_eq!(head, vec![1, 2]);
+assert_eq!(rest, vec![3, 4, 5]);
+```
+
+### 5.5 `collect` 的类型由目标决定
+
+```rust
+let chars: Vec<char> = "hello".chars().collect();
+assert_eq!(chars, vec!['h', 'e', 'l', 'l', 'o']);
+
+let s: String = ['h', 'i'].into_iter().collect();
+assert_eq!(s, "hi");
+
+// 元素是 Result 时可以整体收集
+let parsed: Result<Vec<i32>, _> = ["1", "2"].iter().map(|x| x.parse::<i32>()).collect();
+assert_eq!(parsed, Ok(vec![1, 2]));
+```
+
+`String` 实现的是 `FromIterator<char>` / `FromIterator<&str>` / `FromIterator<String>`；`Vec<T>` 实现的是 `FromIterator<T>`。
+
+### 5.6 一个容易踩的坑
+
+两个迭代器放进同一个元组里 `next()` 时，**两边都会被调用**：
+
+```rust
+let (mut a, mut b) = ([1, 2].into_iter(), [10, 20, 30].into_iter());
+
+// 错误：第三轮 a 返回 None、b 返回 Some(30)，30 已被消费并丢弃
+while let (Some(x), Some(y)) = (a.next(), b.next()) {
+    println!("{x} {y}");
+}
+```
+
+正确做法是让 `None` 单独成支：
+
+```rust
+let (mut a, mut b) = ([1, 2].into_iter(), [10, 20, 30].into_iter());
+
+loop {
+    match (a.next(), b.next()) {
+        (None, None) => break,
+        (x, y) => {
+            if let Some(x) = x {
+                print!("{x} ");
+            }
+            if let Some(y) = y {
+                print!("{y} ");
+            }
+        }
+    }
+}
+```
+
+## 6. `Option` 与 `Result`
+
+### 6.1 `Option`
+
+| API                                                          | 说明                                |
+| ------------------------------------------------------------ | ----------------------------------- |
+| `is_some()` / `is_none()`                                    | 判断                                |
+| `is_some_and(f)`                                             | 有值且满足条件                      |
+| `map(f)`                                                     | 对 `Some` 做变换，`None` 原样传递   |
+| `and_then(f)`                                                | 变换后可能仍为 `Option`（避免嵌套） |
+| `filter(f)`                                                  | 值不满足条件时变 `None`             |
+| `or(other)` / `or_else(f)`                                   | 为 `None` 时提供后备                |
+| `take()`                                                     | 取出值，原位置留下 `None`           |
+| `unwrap()` / `expect(msg)`                                   | 取值，`None` 时 panic               |
+| `unwrap_or(v)` / `unwrap_or_else(f)` / `unwrap_or_default()` | 提供默认值                          |
+| `ok_or(e)` / `ok_or_else(f)`                                 | 转成 `Result`，便于用 `?`           |
+
+```rust
+let x = Some(3);
+assert_eq!(x.map(|v| v * 2), Some(6));
+assert_eq!(x.filter(|v| *v > 5), None);
+assert_eq!(x.and_then(|v| (v > 0).then_some(v)), Some(3));
+assert_eq!(x.unwrap_or(0), 3);
+assert_eq!(None::<i32>.unwrap_or_default(), 0);
+
+let mut slot = Some(String::from("hi"));
+let taken = slot.take();
+assert_eq!(taken, Some(String::from("hi")));
+assert_eq!(slot, None);
+
+let missing: Option<i32> = None;
+let result: Result<i32, &str> = missing.ok_or("missing");
+assert_eq!(result, Err("missing"));
+```
+
+### 6.2 `Result`
+
+| API                                  | 说明                                              |
+| ------------------------------------ | ------------------------------------------------- |
+| `is_ok()` / `is_err()`               | 判断                                              |
+| `map(f)` / `map_err(f)`              | 变换成功值 / 错误值                               |
+| `and_then(f)`                        | 链式处理，失败短路                                |
+| `unwrap()` / `expect(msg)`           | 取值，失败 panic                                  |
+| `unwrap_or(v)` / `unwrap_or_else(f)` | 提供默认值                                        |
+| `?` 运算符                           | 失败时提前返回（函数需返回 `Result` 或 `Option`） |
+
+```rust
+let n: i32 = "42".parse().unwrap();
+assert_eq!(n, 42);
+assert!("abc".parse::<i32>().is_err());
+
+fn double(s: &str) -> Result<i32, std::num::ParseIntError> {
+    let n: i32 = s.parse()?;
+    Ok(n * 2)
+}
+
+assert_eq!(double("21"), Ok(42));
+```
+
+## 7. `Vec` 与 slice
+
+| API                                          | 说明                      |
+| -------------------------------------------- | ------------------------- |
+| `Vec::new()` / `Vec::with_capacity(n)`       | 创建，后者预分配          |
+| `push(v)` / `pop()`                          | 尾部入栈 / 出栈           |
+| `extend(iter)` / `extend_from_slice(&[T])`   | 追加迭代器 / 切片         |
+| `get(i)` / `get_mut(i)`                      | 安全下标，越界返回 `None` |
+| `as_slice()`                                 | 借出 `&[T]`               |
+| `len()` / `is_empty()` / `capacity()`        | 长度 / 判空 / 容量        |
+| `truncate(n)` / `retain(f)` / `drain(range)` | 截断 / 过滤 / 删除范围    |
+| `into_iter()` / `iter()` / `iter_mut()`      | 三种遍历方式              |
+
+```rust
+let mut v: Vec<i32> = Vec::with_capacity(4);
+assert!(v.capacity() >= 4);
+
+v.push(1);
+v.extend([2, 3]);
+v.extend_from_slice(&[4, 5]);
+assert_eq!(v.len(), 5);
+assert_eq!(v.get(10), None);
+assert_eq!(v.as_slice(), &[1, 2, 3, 4, 5]);
+
+if let Some(first) = v.get_mut(0) {
+    *first = 100;
+}
+assert_eq!(v[0], 100);
+```
+
+## 8. 复杂度速查
+
+| 操作                                                       | 复杂度                   |
+| ---------------------------------------------------------- | ------------------------ |
+| `String::len` / `is_empty` / `capacity`                    | O(1)                     |
+| `String::chars().count()`                                  | O(n)                     |
+| `String::push` / `push_str` / `extend`                     | 均摊 O(1)                |
+| `String::remove(i)` / `insert(i)` / `insert_str(i)`        | O(n)                     |
+| `String::replace_range` / `drain` / `retain` / `split_off` | O(n)                     |
+| `String::truncate` / `pop` / `clear`                       | O(1)                     |
+| `String::from_utf8`                                        | O(n) 校验，不复制缓冲    |
+| `String::into_bytes` / `as_bytes` / `as_str`               | O(1)                     |
+| `Vec::push`                                                | 均摊 O(1)                |
+| `slice::get` / `Vec::get`                                  | O(1)                     |
+| `Iterator::count` / `nth(n)` / `skip(n)`                   | O(n)                     |
+| `zip` / `flat_map` / `chain` / `filter`                    | 每个元素 O(1)            |
+| `collect()`                                                | O(输出长度) + 可能的扩容 |
+
+## 9. 易混点与陷阱
+
+| 容易混淆                                          | 区别                                              |
+| ------------------------------------------------- | ------------------------------------------------- |
+| `len()` vs `chars().count()`                      | 字节数 O(1) / 字符数 O(n)，非 ASCII 不相等        |
+| `s[i]` vs `s.chars().nth(i)`                      | 前者不合法；后者按下标取字符，O(n)                |
+| `get(range)` vs `&s[range]`                       | 前者返回 `Option<&str>`，越界或非边界返回 `None`  |
+| `remove` vs `pop`                                 | 按下标删 O(n) / 删末尾 O(1)                       |
+| `remove` vs `truncate`                            | 返回被删字符 / 直接截断无返回值                   |
+| `push` vs `push_str` vs `extend` vs `+=`          | 单个 `char` / `&str` / 迭代器 / `AddAssign<&str>` |
+| `with_capacity` vs `reserve`                      | 创建时分配 / 对已有容器追加容量                   |
+| `map` vs `flat_map` vs `flatten`                  | 一对一 / 映射后展平 / 展平已有可迭代元素          |
+| `zip` vs `chain`                                  | 并行配对取短 / 串行拼接取全部                     |
+| `skip(n)` vs `take(n)` vs `nth(n)`                | 跳过 n / 取前 n / 取第 n 个（并消费前面所有元素） |
+| `collect::<String>()` vs `collect::<Vec<char>>()` | 逐字符拼接 / 每个字符固定占 4 字节                |
+| `unwrap` vs `expect`                              | 都 panic，后者可带自定义信息                      |
+| `min(a, b)` vs `a.min(b)`                         | 前者需 `use std::cmp::min`；后者是 `Ord` 方法     |
+| `&String` vs `&str`                               | `Deref` 让 `&String` 可直接当 `&str` 传参         |
+
+常见陷阱：
+
+- 用字节下标修改字符串前，先确认 `is_char_boundary`，否则 `remove` / `insert` / `truncate` 会 panic。
+- `while let (Some(a), Some(b)) = (it1.next(), it2.next())` 会吞掉先耗尽那一轮中另一侧的字符。
+- 迭代器是惰性的，没有消费动作（`collect`、`for`、`count` 等）就不会执行。
+- `assert_eq!(String, &str)` 能编译，是因为标准库为 `String` 和 `&str` 之间实现了跨类型 `PartialEq`。
+- `String::new()` 是 `const fn`，不分配；`String::with_capacity` 才会分配。
+- `Vec::with_capacity` / `String::with_capacity` 只保证"至少"，实际容量可能更大。
+
+## 10. 测试常用
+
+| API                                                     | 说明                                 |
+| ------------------------------------------------------- | ------------------------------------ |
+| `#[cfg(test)]`                                          | 仅在 `cargo test` 时编译该模块       |
+| `#[test]`                                               | 标记测试函数                         |
+| `#[should_panic]` / `#[should_panic(expected = "...")]` | 断言会 panic，可匹配信息             |
+| `assert!(cond)`                                         | 布尔断言                             |
+| `assert_eq!(a, b)`                                      | 相等断言，要求 `PartialEq` + `Debug` |
+| `assert_ne!(a, b)`                                      | 不等断言                             |
+| `#[ignore]`                                             | 默认跳过该测试                       |
+
+```rust
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn len_counts_bytes() {
+        assert_eq!("héllo".len(), 6);
+    }
+
+    #[test]
+    #[should_panic]
+    fn remove_out_of_bounds_panics() {
+        let mut s = String::from("hi");
+        s.remove(9);
+    }
+}
+```
+
+子模块可以通过 `super::` 访问父模块的项（包括私有项），通常用 `use super::*;` 简化路径。
+
+## 11. 参考
+
+- [`std::string::String`](https://doc.rust-lang.org/std/string/struct.String.html)
+- [`str` primitive](https://doc.rust-lang.org/std/primitive.str.html)
+- [`std::str::Chars`](https://doc.rust-lang.org/std/str/struct.Chars.html)
+- [`std::iter::Iterator`](https://doc.rust-lang.org/std/iter/trait.Iterator.html)
+- [`std::option::Option`](https://doc.rust-lang.org/std/option/enum.Option.html)
+- [`std::result::Result`](https://doc.rust-lang.org/std/result/enum.Result.html)
+- [`std::vec::Vec`](https://doc.rust-lang.org/std/vec/struct.Vec.html)
+- [`std::iter::FromIterator`](https://doc.rust-lang.org/std/iter/trait.FromIterator.html)
+- [`itertools::Itertools`](https://docs.rs/itertools/latest/itertools/trait.Itertools.html)
