@@ -1,1 +1,2 @@
+mod greatest_common_divisor_of_strings;
 mod merge_strings_alternately;
