@@ -6,6 +6,24 @@ struct Solution {}
 
 impl Solution {
     pub fn gcd_of_strings(str1: String, str2: String) -> String {
+        let (m, n) = (str1.len(), str2.len());
+
+        for pre_len in (1..=m.min(n)).rev() {
+            if m % pre_len != 0 || n % pre_len != 0 {
+                continue;
+            }
+
+            let candidate = &str1[..pre_len];
+
+            if str1 == candidate.repeat(m / pre_len) && str2 == candidate.repeat(n / pre_len) {
+                return candidate.to_string();
+            }
+        }
+
+        String::new()
+    }
+
+    pub fn gcd_of_strings_2(str1: String, str2: String) -> String {
         let (str1_len, str2_len) = (str1.len(), str2.len());
         let mut s = str1;
         let mut g = str2;
