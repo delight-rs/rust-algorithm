@@ -6,6 +6,28 @@ struct Solution {}
 
 impl Solution {
     pub fn gcd_of_strings(str1: String, str2: String) -> String {
+        if str1.is_empty() || str2.is_empty() {
+            return String::new();
+        }
+
+        if !str1
+            .bytes()
+            .chain(str2.bytes())
+            .eq(str2.bytes().chain(str1.bytes()))
+        {
+            return String::new();
+        }
+
+        let (mut a, mut b) = (str1.len(), str2.len());
+
+        while b != 0 {
+            (a, b) = (b, a % b);
+        }
+
+        str1[..a].to_string()
+    }
+
+    pub fn gcd_of_strings_3(str1: String, str2: String) -> String {
         let (m, n) = (str1.len(), str2.len());
 
         for pre_len in (1..=m.min(n)).rev() {
@@ -53,6 +75,28 @@ impl Solution {
     }
 
     fn is_division(str: &str, d: &str) -> bool {
+        let d_bytes = d.as_bytes();
+        !d.is_empty()
+            && str.len() % d.len() == 0
+            && str
+                .as_bytes()
+                .chunks_exact(d.len())
+                .all(|block| block == d_bytes)
+    }
+
+    fn is_division_3(str: &str, d: &str) -> bool {
+        if str.is_empty() || d.is_empty() {
+            return false;
+        }
+
+        if str.len() % d.len() != 0 {
+            return false;
+        };
+
+        return str.eq(&d.repeat(str.len() / d.len()));
+    }
+
+    fn is_division_2(str: &str, d: &str) -> bool {
         let s_len = str.len();
         let d_len = d.len();
 
