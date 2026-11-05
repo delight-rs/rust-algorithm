@@ -75,13 +75,12 @@ impl Solution {
     }
 
     fn is_division(str: &str, d: &str) -> bool {
-        let d_bytes = d.as_bytes();
         !d.is_empty()
             && str.len() % d.len() == 0
             && str
                 .as_bytes()
                 .chunks_exact(d.len())
-                .all(|block| block == d_bytes)
+                .all(|block| block == d.as_bytes())
     }
 
     fn is_division_3(str: &str, d: &str) -> bool {

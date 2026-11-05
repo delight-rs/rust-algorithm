@@ -1,6 +1,6 @@
 # Rust 常用 API 笔记：字符串与迭代器
 
-> 主题：`String` / `&str`、迭代器适配器、`Option` / `Result`、`Vec` / slice 的常用方法与易混点。
+> 主题：`String` / `&str`、迭代器适配器、`Option` / `Result`、`Vec` / slice、`mem` 的常用方法与易混点。
 > 示例都是最小片段，可以直接粘进 `#[test]` 里运行。
 
 ## 1. `String` 与 `&str`
@@ -80,6 +80,7 @@ assert!(!s.is_char_boundary(2));
 | `String::new()`                    | 空串，不分配                          |
 | `String::from("...")`              | 从 `&str` 复制                        |
 | `"".to_string()` / `"".to_owned()` | 同上，写法不同                        |
+| `s.repeat(n)`                      | 把 `s` 重复 n 次，生成新 `String`     |
 | `String::with_capacity(n)`         | 预分配至少 n **字节**                 |
 | `reserve(n)` / `reserve_exact(n)`  | 额外预留 n 字节（精确版本不超额分配） |
 | `shrink_to_fit()`                  | 把容量收缩到当前长度                  |
@@ -102,6 +103,10 @@ assert_eq!(from_bytes, "hi");
 
 assert!(String::from_utf8(vec![0xC3]).is_err());        // 截断的 UTF-8
 assert_eq!(String::from_utf8_lossy(&[0xC3]), "\u{FFFD}");
+
+assert_eq!("ab".repeat(3), "ababab");
+assert_eq!("".repeat(10), "");
+assert_eq!("x".repeat(0), "");
 ```
 
 ## 3. 字符串的修改
@@ -169,6 +174,7 @@ let mut s = String::from("é");
 | `chars()`         | `char`          | 按 UTF-8 解码逐字符                    |
 | `char_indices()`  | `(usize, char)` | 字符及其起始字节偏移                   |
 | `bytes()`         | `u8`            | 原始字节，不做解码                     |
+| `as_bytes()`      | `&[u8]`         | 零拷贝借出字节切片，可用 slice 方法    |
 | `chars().rev()`   | `char`          | 反向，`Chars` 是 `DoubleEndedIterator` |
 | `Chars::as_str()` | `&str`          | 返回**尚未消费**的剩余片段             |
 
@@ -231,6 +237,8 @@ assert_eq!(doubled, vec![2, 4, 6]);
 | 借用 | `by_ref()`                                    | 返回 `&mut Iterator`，用于部分消费后继续用 |
 | 消费 | `collect()` / `count()` / `last()` / `nth(n)` | 收集 / 计数 / 最后一个 / 第 n 个           |
 | 消费 | `fold(init, f)` / `reduce(f)` / `for_each(f)` | 累积 / 归约 / 逐项执行                     |
+| 判定 | `all(f)` / `any(f)`                           | 全部满足 / 任一满足，可提前短路            |
+| 比较 | `eq(other)` / `ne(other)`                     | 与另一个迭代器逐元素比较，消耗双方         |
 
 ```rust
 let doubled: Vec<i32> = vec![1, 2, 3].into_iter().map(|x| x * 2).collect();
@@ -254,6 +262,9 @@ assert_eq!(parsed, vec![1, 3]);
 
 let sum = (1..=5).fold(0, |acc, x| acc + x);
 assert_eq!(sum, 15);
+
+let desc: Vec<i32> = (1..=3).rev().collect();
+assert_eq!(desc, vec![3, 2, 1]);
 ```
 
 ### 5.3 `zip` 与 `chain`
@@ -356,6 +367,24 @@ loop {
 }
 ```
 
+### 5.7 `all` / `any` / `eq`：判定与比较
+
+```rust
+let bytes: Vec<u8> = "12345".bytes().collect();
+assert!(bytes.iter().all(u8::is_ascii_digit));
+assert!(bytes.iter().any(|b| *b == b'3'));
+
+// 与另一个迭代器逐元素比较，双方都会被消费
+assert!("hello".bytes().eq("hello".bytes()));
+assert!("abc".bytes().ne("abd".bytes()));
+
+// 空迭代器：all 恒为 true，any 恒为 false
+assert!([0u8; 0].iter().all(|_| false));
+assert!(![0u8; 0].iter().any(|_| true));
+```
+
+`eq` / `ne` 要求元素实现 `PartialEq`；只要 `Item` 类型相同，不同来源的迭代器可以互相比较。
+
 ## 6. `Option` 与 `Result`
 
 ### 6.1 `Option`
@@ -417,16 +446,19 @@ assert_eq!(double("21"), Ok(42));
 
 ## 7. `Vec` 与 slice
 
-| API                                          | 说明                      |
-| -------------------------------------------- | ------------------------- |
-| `Vec::new()` / `Vec::with_capacity(n)`       | 创建，后者预分配          |
-| `push(v)` / `pop()`                          | 尾部入栈 / 出栈           |
-| `extend(iter)` / `extend_from_slice(&[T])`   | 追加迭代器 / 切片         |
-| `get(i)` / `get_mut(i)`                      | 安全下标，越界返回 `None` |
-| `as_slice()`                                 | 借出 `&[T]`               |
-| `len()` / `is_empty()` / `capacity()`        | 长度 / 判空 / 容量        |
-| `truncate(n)` / `retain(f)` / `drain(range)` | 截断 / 过滤 / 删除范围    |
-| `into_iter()` / `iter()` / `iter_mut()`      | 三种遍历方式              |
+| API                                          | 说明                              |
+| -------------------------------------------- | --------------------------------- |
+| `Vec::new()` / `Vec::with_capacity(n)`       | 创建，后者预分配                  |
+| `push(v)` / `pop()`                          | 尾部入栈 / 出栈                   |
+| `extend(iter)` / `extend_from_slice(&[T])`   | 追加迭代器 / 切片                 |
+| `get(i)` / `get_mut(i)`                      | 安全下标，越界返回 `None`         |
+| `as_slice()`                                 | 借出 `&[T]`                       |
+| `chunks(n)` / `chunks_exact(n)`              | 连续分块；exact 丢弃不足 n 的尾块 |
+| `rchunks(n)` / `windows(n)`                  | 反向分块 / 定长滑动窗口           |
+| `swap(i, j)`                                 | 交换两个元素，O(1)                |
+| `len()` / `is_empty()` / `capacity()`        | 长度 / 判空 / 容量                |
+| `truncate(n)` / `retain(f)` / `drain(range)` | 截断 / 过滤 / 删除范围            |
+| `into_iter()` / `iter()` / `iter_mut()`      | 三种遍历方式                      |
 
 ```rust
 let mut v: Vec<i32> = Vec::with_capacity(4);
@@ -443,6 +475,40 @@ if let Some(first) = v.get_mut(0) {
     *first = 100;
 }
 assert_eq!(v[0], 100);
+
+let data = [1, 2, 3, 4, 5];
+let blocks: Vec<&[i32]> = data.chunks(2).collect();
+assert_eq!(blocks, vec![&data[0..2], &data[2..4], &data[4..5]]);
+
+let exact: Vec<&[i32]> = data.chunks_exact(2).collect();
+assert_eq!(exact, vec![&data[0..2], &data[2..4]]); // 尾块 [5] 被丢弃
+
+let mut v = vec![1, 2, 3];
+v.swap(0, 2);
+assert_eq!(v, vec![3, 2, 1]);
+```
+
+`&str` 本身没有 `chunks`，先 `as_bytes()` 借出 `&[u8]` 再分块：
+
+```rust
+assert!("abab".as_bytes().chunks_exact(2).all(|b| b == b"ab"));
+```
+
+交换任意两个变量（不限类型）用 `std::mem::swap`；同类还有 `mem::take`（取出并留下 `T::default()`）与 `mem::replace`（取出并留下指定值）：
+
+```rust
+let (mut a, mut b) = ("left", "right");
+std::mem::swap(&mut a, &mut b);
+assert_eq!((a, b), ("right", "left"));
+
+let mut s = String::from("hello");
+let taken = std::mem::take(&mut s); // 要求 T: Default
+assert_eq!(taken, "hello");
+assert_eq!(s, "");
+
+let mut n = 5;
+assert_eq!(std::mem::replace(&mut n, 0), 5);
+assert_eq!(n, 0);
 ```
 
 ## 8. 复杂度速查
@@ -462,6 +528,10 @@ assert_eq!(v[0], 100);
 | `Iterator::count` / `nth(n)` / `skip(n)`                   | O(n)                     |
 | `zip` / `flat_map` / `chain` / `filter`                    | 每个元素 O(1)            |
 | `collect()`                                                | O(输出长度) + 可能的扩容 |
+| `str::repeat(n)`                                           | O(n·len)，一次分配       |
+| `slice::chunks` / `chunks_exact` / `windows`               | 每产生一个块 O(1)        |
+| `Iterator::all` / `any` / `eq`                             | O(n)，可提前短路         |
+| `slice::swap` / `std::mem::swap`                           | O(1)                     |
 
 ## 9. 易混点与陷阱
 
@@ -481,6 +551,10 @@ assert_eq!(v[0], 100);
 | `unwrap` vs `expect`                              | 都 panic，后者可带自定义信息                      |
 | `min(a, b)` vs `a.min(b)`                         | 前者需 `use std::cmp::min`；后者是 `Ord` 方法     |
 | `&String` vs `&str`                               | `Deref` 让 `&String` 可直接当 `&str` 传参         |
+| `chunks(n)` vs `chunks_exact(n)`                  | 保留不足 n 的尾块 / 丢弃尾块                      |
+| `v.swap(i, j)` vs `std::mem::swap`                | 交换同一 slice 的两个元素 / 交换任意两个 `&mut`   |
+| `all` vs `any`（空迭代器）                        | `all` 恒为 true，`any` 恒为 false                 |
+| `repeat(n)` vs 循环 `push_str`                    | 一次算出长度并分配 / 可能多次扩容                 |
 
 常见陷阱：
 
@@ -490,6 +564,8 @@ assert_eq!(v[0], 100);
 - `assert_eq!(String, &str)` 能编译，是因为标准库为 `String` 和 `&str` 之间实现了跨类型 `PartialEq`。
 - `String::new()` 是 `const fn`，不分配；`String::with_capacity` 才会分配。
 - `Vec::with_capacity` / `String::with_capacity` 只保证"至少"，实际容量可能更大。
+- `chunks(0)` / `chunks_exact(0)` / `windows(0)` 会 panic，块大小必须 ≥ 1。
+- `all` / `any` / `eq` / `count` 等都会消费迭代器，调用后不能再使用。
 
 ## 10. 测试常用
 
