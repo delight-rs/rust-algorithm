@@ -4,6 +4,15 @@ struct Solution {}
 
 impl Solution {
     pub fn kids_with_candies(candies: Vec<i32>, extra_candies: i32) -> Vec<bool> {
+        let max = match candies.iter().max() {
+            Some(&m) => m,
+            None => return Vec::new(),
+        };
+
+        candies.iter().map(|&c| c >= max - extra_candies).collect()
+    }
+
+    pub fn kids_with_candies_2(candies: Vec<i32>, extra_candies: i32) -> Vec<bool> {
         let mut max = candies[0];
 
         for i in 1..candies.len() {
