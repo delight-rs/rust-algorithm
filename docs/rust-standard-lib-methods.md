@@ -236,6 +236,7 @@ assert_eq!(doubled, vec![2, 4, 6]);
 | 组合 | `peekable()` / `peek()`                       | 预读                                       |
 | 借用 | `by_ref()`                                    | 返回 `&mut Iterator`，用于部分消费后继续用 |
 | 消费 | `collect()` / `count()` / `last()` / `nth(n)` | 收集 / 计数 / 最后一个 / 第 n 个           |
+| 消费 | `max()` / `min()`                             | 极值，需 `Ord`，详见 5.8                   |
 | 消费 | `fold(init, f)` / `reduce(f)` / `for_each(f)` | 累积 / 归约 / 逐项执行                     |
 | 判定 | `all(f)` / `any(f)`                           | 全部满足 / 任一满足，可提前短路            |
 | 比较 | `eq(other)` / `ne(other)`                     | 与另一个迭代器逐元素比较，消耗双方         |
@@ -385,6 +386,49 @@ assert!(![0u8; 0].iter().any(|_| true));
 
 `eq` / `ne` 要求元素实现 `PartialEq`；只要 `Item` 类型相同，不同来源的迭代器可以互相比较。
 
+### 5.8 极值：`max` / `min` 与 `copied`
+
+`max()` / `min()` 消费整个迭代器，返回 `Option<Self::Item>`，要求元素实现 `Ord`；空迭代器返回 `None`。因为 `iter()` 的元素是 `&T`，所以得到的是 `Option<&T>`：
+
+```rust
+let v = vec![2, 3, 5, 1, 3];
+assert_eq!(v.iter().max(), Some(&5));
+assert_eq!(v.iter().min(), Some(&1));
+
+let m = match v.iter().max() {
+    Some(&m) => m,      // 把 i32 按值拷贝出来
+    None => return,     // 在函数内处理空迭代器
+};
+assert_eq!(m, 5);
+
+assert_eq!(v.iter().copied().max(), Some(5)); // 先拷贝，得到 Option<i32>
+assert_eq!(v.into_iter().max(), Some(5));     // 所有权版本，v 被消费
+assert_eq!(Vec::<i32>::new().iter().max(), None); // 空迭代器
+```
+
+取出 `Option<&T>` 里的值有两种惯用方式：`&` 模式解构（要求 `T: Copy`），或先用 `copied()` / `cloned()` 转成 `Option<T>`。非 `Copy` 类型直接绑定引用即可：
+
+```rust
+let s = vec![String::from("a"), String::from("bb")];
+let longest = s.iter().max_by_key(|s| s.len()); // Option<&String>
+assert_eq!(longest, Some(&String::from("bb")));
+```
+
+自定义比较：
+
+| 方法                              | 说明                                   |
+| --------------------------------- | -------------------------------------- |
+| `max_by(f)` / `min_by(f)`         | 用比较函数，返回 `Ordering`            |
+| `max_by_key(f)` / `min_by_key(f)` | 按投影出的键比较，键对每个元素只算一次 |
+
+```rust
+let v: Vec<i32> = vec![1, -2, 3];
+assert_eq!(v.iter().max_by(|a, b| a.cmp(b)), Some(&3));
+assert_eq!(v.iter().copied().min_by_key(|&x| x.abs()), Some(1));
+```
+
+复杂度：O(n) 时间，O(1) 额外空间（只保留当前最优元素与键）；`copied()` / `cloned()` 每个元素 O(1)。并列时 `max` 取最后一个最大值，`min` 取第一个最小值。
+
 ## 6. `Option` 与 `Result`
 
 ### 6.1 `Option`
@@ -446,19 +490,22 @@ assert_eq!(double("21"), Ok(42));
 
 ## 7. `Vec` 与 slice
 
-| API                                          | 说明                              |
-| -------------------------------------------- | --------------------------------- |
-| `Vec::new()` / `Vec::with_capacity(n)`       | 创建，后者预分配                  |
-| `push(v)` / `pop()`                          | 尾部入栈 / 出栈                   |
-| `extend(iter)` / `extend_from_slice(&[T])`   | 追加迭代器 / 切片                 |
-| `get(i)` / `get_mut(i)`                      | 安全下标，越界返回 `None`         |
-| `as_slice()`                                 | 借出 `&[T]`                       |
-| `chunks(n)` / `chunks_exact(n)`              | 连续分块；exact 丢弃不足 n 的尾块 |
-| `rchunks(n)` / `windows(n)`                  | 反向分块 / 定长滑动窗口           |
-| `swap(i, j)`                                 | 交换两个元素，O(1)                |
-| `len()` / `is_empty()` / `capacity()`        | 长度 / 判空 / 容量                |
-| `truncate(n)` / `retain(f)` / `drain(range)` | 截断 / 过滤 / 删除范围            |
-| `into_iter()` / `iter()` / `iter_mut()`      | 三种遍历方式                      |
+| API                                          | 说明                                 |
+| -------------------------------------------- | ------------------------------------ |
+| `Vec::new()` / `Vec::with_capacity(n)`       | 创建，后者预分配                     |
+| `vec![...]` / `vec![v; n]`                   | 由元素创建 / 重复 n 个（需 `Clone`） |
+| `push(v)` / `pop()`                          | 尾部入栈 / 出栈                      |
+| `extend(iter)` / `extend_from_slice(&[T])`   | 追加迭代器 / 切片                    |
+| `v[i]`（`Index` / `IndexMut`）               | 直接下标，越界 panic                 |
+| `get(i)` / `get_mut(i)`                      | 安全下标，越界返回 `None`            |
+| `first()` / `last()`（及 `_mut` 版本）       | 首 / 尾元素，`Option<&T>`            |
+| `as_slice()`                                 | 借出 `&[T]`                          |
+| `chunks(n)` / `chunks_exact(n)`              | 连续分块；exact 丢弃不足 n 的尾块    |
+| `rchunks(n)` / `windows(n)`                  | 反向分块 / 定长滑动窗口              |
+| `swap(i, j)`                                 | 交换两个元素，O(1)                   |
+| `len()` / `is_empty()` / `capacity()`        | 长度 / 判空 / 容量                   |
+| `truncate(n)` / `retain(f)` / `drain(range)` | 截断 / 过滤 / 删除范围               |
+| `into_iter()` / `iter()` / `iter_mut()`      | 三种遍历方式                         |
 
 ```rust
 let mut v: Vec<i32> = Vec::with_capacity(4);
@@ -487,6 +534,47 @@ let mut v = vec![1, 2, 3];
 v.swap(0, 2);
 assert_eq!(v, vec![3, 2, 1]);
 ```
+
+下标索引（`Index` / `IndexMut`），越界会 panic：
+
+```rust
+let mut v = vec![10, 20, 30];
+assert_eq!(v[0], 10);
+v[1] = 25;                        // IndexMut，原地修改
+assert_eq!(v[1], 25);
+// v[3];                          // panic: index out of bounds
+
+assert_eq!(v.first(), Some(&10)); // 不确定是否为空时更安全
+assert_eq!(v.last(), Some(&30));
+assert_eq!(Vec::<i32>::new().first(), None);
+```
+
+### 7.1 遍历方式
+
+| 写法                                 | 元素类型      | 说明                          |
+| ------------------------------------ | ------------- | ----------------------------- |
+| `for x in v.iter()`                  | `&T`          | 借用，`v` 仍可用              |
+| `for x in &v`                        | `&T`          | `for` 自动调用 `iter()`       |
+| `for &x in &v`                       | `T`           | 模式解构，要求 `T: Copy`      |
+| `for x in v`                         | `T`           | 所有权移动，之后 `v` 不可再用 |
+| `for i in 0..v.len()`                | `usize`       | 下标循环，每次 `v[i]` 是 O(1) |
+| `for (i, x) in v.iter().enumerate()` | `(usize, &T)` | 带下标的惯用写法              |
+
+```rust
+let v = vec![1, 2, 3];
+
+for x in v.iter() { /* x: &i32 */ }
+for &x in &v { /* x: i32 */ }
+// for x in v { /* 消费 v，之后不能再使用 */ }
+
+for i in 0..v.len() {
+    let x = v[i]; // 每次下标访问 O(1)
+}
+
+for (i, x) in v.iter().enumerate() { /* i: usize, x: &i32 */ }
+```
+
+空 `Vec` 的 `0..v.len()` 是空范围，循环体不会执行；但直接写 `v[0]` 仍会 panic，需先判空或用 `first()`。含右端点的区间写作 `0..=n`。
 
 `&str` 本身没有 `chunks`，先 `as_bytes()` 借出 `&[u8]` 再分块：
 
@@ -524,6 +612,8 @@ assert_eq!(n, 0);
 | `String::from_utf8`                                        | O(n) 校验，不复制缓冲    |
 | `String::into_bytes` / `as_bytes` / `as_str`               | O(1)                     |
 | `Vec::push`                                                | 均摊 O(1)                |
+| `Vec` 下标 `v[i]` / `first()` / `last()`                   | O(1)                     |
+| `vec![...]`                                                | O(n)，一次分配           |
 | `slice::get` / `Vec::get`                                  | O(1)                     |
 | `Iterator::count` / `nth(n)` / `skip(n)`                   | O(n)                     |
 | `zip` / `flat_map` / `chain` / `filter`                    | 每个元素 O(1)            |
@@ -531,6 +621,8 @@ assert_eq!(n, 0);
 | `str::repeat(n)`                                           | O(n·len)，一次分配       |
 | `slice::chunks` / `chunks_exact` / `windows`               | 每产生一个块 O(1)        |
 | `Iterator::all` / `any` / `eq`                             | O(n)，可提前短路         |
+| `Iterator::max` / `min` / `max_by` / `max_by_key`          | O(n)，O(1) 额外空间      |
+| `Iterator::copied` / `cloned`                              | 每个元素 O(1)            |
 | `slice::swap` / `std::mem::swap`                           | O(1)                     |
 
 ## 9. 易混点与陷阱
@@ -553,6 +645,12 @@ assert_eq!(n, 0);
 | `&String` vs `&str`                               | `Deref` 让 `&String` 可直接当 `&str` 传参         |
 | `chunks(n)` vs `chunks_exact(n)`                  | 保留不足 n 的尾块 / 丢弃尾块                      |
 | `v.swap(i, j)` vs `std::mem::swap`                | 交换同一 slice 的两个元素 / 交换任意两个 `&mut`   |
+| `v[i]` vs `v.get(i)`                              | 越界 panic / 返回 `Option<&T>`                    |
+| `v[0]` vs `v.first()`                             | 空 Vec panic / 返回 `None`                        |
+| `v.iter().max()` vs `v.into_iter().max()`         | 返回 `Option<&T>` / 返回 `Option<T>`              |
+| `Iterator::max()` vs `Ord::max()`                 | 迭代器极值，返回 `Option` / 两个值取较大者        |
+| `max()` vs `max_by_key(f)`                        | 直接比较元素 / 按投影出的键比较                   |
+| `for i in 0..v.len()` vs `enumerate()`            | 下标循环 / 惯用的带下标遍历                       |
 | `all` vs `any`（空迭代器）                        | `all` 恒为 true，`any` 恒为 false                 |
 | `repeat(n)` vs 循环 `push_str`                    | 一次算出长度并分配 / 可能多次扩容                 |
 
@@ -566,6 +664,9 @@ assert_eq!(n, 0);
 - `Vec::with_capacity` / `String::with_capacity` 只保证"至少"，实际容量可能更大。
 - `chunks(0)` / `chunks_exact(0)` / `windows(0)` 会 panic，块大小必须 ≥ 1。
 - `all` / `any` / `eq` / `count` 等都会消费迭代器，调用后不能再使用。
+- `iter().max()` / `iter().min()` 在空迭代器上返回 `None`，直接 `unwrap()` 会 panic。
+- `iter()` 的元素是 `&T`：`max()` 得到 `Option<&T>`，取出按值用 `&` 模式解构（要求 `Copy`）或 `copied()` / `cloned()`。
+- `v[0]` / `v[i]` 越界会 panic；不确定是否为空时用 `first()` / `get()`。
 
 ## 10. 测试常用
 
@@ -608,4 +709,6 @@ mod tests {
 - [`std::result::Result`](https://doc.rust-lang.org/std/result/enum.Result.html)
 - [`std::vec::Vec`](https://doc.rust-lang.org/std/vec/struct.Vec.html)
 - [`std::iter::FromIterator`](https://doc.rust-lang.org/std/iter/trait.FromIterator.html)
+- [`std::ops::Index`](https://doc.rust-lang.org/std/ops/trait.Index.html)
+- [`std::ops::Range`](https://doc.rust-lang.org/std/ops/struct.Range.html)
 - [`itertools::Itertools`](https://docs.rs/itertools/latest/itertools/trait.Itertools.html)
