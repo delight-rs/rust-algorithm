@@ -1,6 +1,6 @@
 # Rust 常用 API 笔记：字符串与迭代器
 
-> 主题：`String` / `&str`、迭代器适配器、`Option` / `Result`、`Vec` / slice、`mem` 的常用方法与易混点。
+> 主题：`String` / `&str`、字节缓冲与 ASCII 处理、迭代器适配器、`Option` / `Result`、`Vec` / slice、`mem` 的常用方法与易混点。
 > 示例都是最小片段，可以直接粘进 `#[test]` 里运行。
 
 ## 1. `String` 与 `&str`
@@ -109,6 +109,29 @@ assert_eq!("".repeat(10), "");
 assert_eq!("x".repeat(0), "");
 ```
 
+### 2.1 与字节缓冲互转
+
+`String` 与 `Vec<u8>` 可以**零拷贝**地互相转换，只是方向不同：
+
+| API                                | 说明                                              | 复杂度                  |
+| ---------------------------------- | ------------------------------------------------- | ----------------------- |
+| `s.into_bytes()`                   | 消费 `String`，返回底层 `Vec<u8>`（容量一并带走） | O(1)，不复制            |
+| `String::from_utf8(vec)`           | 接管 `Vec<u8>`，并校验 UTF-8                      | O(n) 校验，成功时不复制 |
+| `String::from_utf8_unchecked(vec)` | 跳过校验，由调用方保证合法（`unsafe`）            | O(1)                    |
+| `String::from_utf8_lossy(&[u8])`   | 非法序列替换为 U+FFFD，返回 `Cow<str>`            | O(n)，可能分配          |
+| `err.into_bytes()`                 | 从 `FromUtf8Error` 取回原始 `Vec<u8>`             | O(1)                    |
+
+```rust
+let mut bytes = String::from("hello").into_bytes(); // 复用原缓冲区
+bytes[0] = b'H';
+assert_eq!(String::from_utf8(bytes).unwrap(), "Hello");
+
+let err = String::from_utf8(vec![0xC3]).unwrap_err();
+assert_eq!(err.into_bytes(), vec![0xC3]); // 失败也能拿回原数据
+```
+
+`from_utf8` 的 O(n) 只是校验扫描；数据确定是 ASCII 时开销很小。不要为了省这一次扫描而默认使用 `unsafe`；如果确实需要，先 `debug_assert!(vec.is_ascii())` 并在注释中说明不变量。
+
 ## 3. 字符串的修改
 
 | API                                       | 说明                                    | 复杂度    |
@@ -199,6 +222,45 @@ assert_eq!('é'.len_utf8(), 2);
 assert_eq!('中'.len_utf8(), 3);
 assert_eq!(std::mem::size_of::<char>(), 4);
 ```
+
+### 4.1 ASCII 判定与大小写
+
+以下方法只处理 **ASCII 子集**，复杂度均为 O(1)；对非 ASCII 字符返回 `false` 或原样返回：
+
+| API                                               | 说明                           |
+| ------------------------------------------------- | ------------------------------ |
+| `c.is_ascii()`                                    | 是否落在 `0x00..=0x7F`         |
+| `c.is_ascii_alphabetic()` / `is_ascii_digit()`    | 字母 / 数字                    |
+| `c.is_ascii_alphanumeric()`                       | 字母或数字                     |
+| `c.is_ascii_lowercase()` / `is_ascii_uppercase()` | 小写 / 大写                    |
+| `c.is_ascii_whitespace()`                         | 空格、`\t`、`\n`、`\r`、`\x0c` |
+| `c.to_ascii_lowercase()` / `to_ascii_uppercase()` | 只转换 ASCII，其余原样返回     |
+| `c.eq_ignore_ascii_case(&other)`                  | ASCII 范围忽略大小写比较       |
+
+`u8` 也有同名方法，扫描字节序列时直接对 `u8` 判断即可，不必先转成 `char`。
+
+需要完整 Unicode 大小写时用 `to_lowercase()` / `to_uppercase()`：它们返回迭代器，一个字符可能展开成多个（如 `ß`），时间 O(字符数)，收集时通常需要分配。
+
+多分支判定可以用 `matches!` 宏，比一串 `if` 更紧凑：
+
+```rust
+fn is_hex(c: char) -> bool {
+    matches!(c, '0'..='9' | 'a'..='f' | 'A'..='F')
+}
+
+assert!(is_hex('f'));
+assert!(!is_hex('g'));
+```
+
+### 4.2 按字符还是按字节
+
+| 方式                       | 前提                              | 时间 | 额外空间         | 说明                                |
+| -------------------------- | --------------------------------- | ---- | ---------------- | ----------------------------------- |
+| `Vec<char>` + `collect()`  | 任意 UTF-8                        | O(n) | O(4n)            | 每个 `char` 固定 4 字节，逻辑最直观 |
+| `into_bytes()` / `Vec<u8>` | 只操作 ASCII，或只交换 ASCII 字节 | O(n) | O(1)，复用缓冲区 | 省去解码/编码，速度和内存更优       |
+| `as_bytes()`               | 只读分析                          | O(n) | O(1)             | 借出字节切片，不能直接修改          |
+
+只交换 ASCII 字节是安全的：多字节序列的每个字节都 ≥ 0x80，不会被 ASCII 判定命中，也不会被移动，因此结果仍是合法 UTF-8。若输入不保证 ASCII、又需要按字符语义处理，优先选 `Vec<char>`。
 
 ## 5. 迭代器
 
@@ -334,6 +396,16 @@ assert_eq!(parsed, Ok(vec![1, 2]));
 ```
 
 `String` 实现的是 `FromIterator<char>` / `FromIterator<&str>` / `FromIterator<String>`；`Vec<T>` 实现的是 `FromIterator<T>`。
+
+`collect()` 与关联函数 `FromIterator::from_iter` 等价（2018 及更早 edition 需 `use std::iter::FromIterator;`）：
+
+```rust
+let s1: String = ['h', 'i'].into_iter().collect();
+let s2 = String::from_iter(['h', 'i']);
+assert_eq!(s1, s2);
+```
+
+复杂度：`collect::<String>()` / `String::from_iter` 需要遍历并逐个编码，时间 O(输出字节数)，空间 O(输出字节数)；若源是 `Vec<char>`，中间还会额外占用 4 字节/字符。`collect::<Vec<T>>()` 时间 O(n)，空间 O(n)。
 
 ### 5.6 一个容易踩的坑
 
@@ -641,32 +713,39 @@ assert_eq!(x, y);
 
 ## 8. 复杂度速查
 
-| 操作                                                       | 复杂度                   |
-| ---------------------------------------------------------- | ------------------------ |
-| `String::len` / `is_empty` / `capacity`                    | O(1)                     |
-| `String::chars().count()`                                  | O(n)                     |
-| `String::push` / `push_str` / `extend`                     | 均摊 O(1)                |
-| `String::remove(i)` / `insert(i)` / `insert_str(i)`        | O(n)                     |
-| `String::replace_range` / `drain` / `retain` / `split_off` | O(n)                     |
-| `String::truncate` / `pop` / `clear`                       | O(1)                     |
-| `String::from_utf8`                                        | O(n) 校验，不复制缓冲    |
-| `String::into_bytes` / `as_bytes` / `as_str`               | O(1)                     |
-| `Vec::push`                                                | 均摊 O(1)                |
-| `Vec::len` / `is_empty` / `capacity`                       | O(1)                     |
-| `Vec` 下标 `v[i]` / `first()` / `last()`                   | O(1)                     |
-| `vec![...]`                                                | O(n)，一次分配           |
-| `Vec::clone` / `slice::to_vec` / `to_owned`                | O(n) 时间，O(n) 空间     |
-| `Rc::clone` / `Arc::clone`                                 | O(1)，仅增加引用计数     |
-| `slice::get` / `Vec::get`                                  | O(1)                     |
-| `Iterator::count` / `nth(n)` / `skip(n)`                   | O(n)                     |
-| `zip` / `flat_map` / `chain` / `filter`                    | 每个元素 O(1)            |
-| `collect()`                                                | O(输出长度) + 可能的扩容 |
-| `str::repeat(n)`                                           | O(n·len)，一次分配       |
-| `slice::chunks` / `chunks_exact` / `windows`               | 每产生一个块 O(1)        |
-| `Iterator::all` / `any` / `eq`                             | O(n)，可提前短路         |
-| `Iterator::max` / `min` / `max_by` / `max_by_key`          | O(n)，O(1) 额外空间      |
-| `Iterator::copied` / `cloned`                              | 每个元素 O(1)            |
-| `slice::swap` / `std::mem::swap`                           | O(1)                     |
+| 操作                                                       | 复杂度                      |
+| ---------------------------------------------------------- | --------------------------- |
+| `String::len` / `is_empty` / `capacity`                    | O(1)                        |
+| `String::chars().count()`                                  | O(n)                        |
+| `String::push` / `push_str` / `extend`                     | 均摊 O(1)                   |
+| `String::remove(i)` / `insert(i)` / `insert_str(i)`        | O(n)                        |
+| `String::replace_range` / `drain` / `retain` / `split_off` | O(n)                        |
+| `String::truncate` / `pop` / `clear`                       | O(1)                        |
+| `String::from_utf8`                                        | O(n) 校验，不复制缓冲       |
+| `String::from_utf8_unchecked`                              | O(1)，`unsafe`，需保证合法  |
+| `String::from_utf8_lossy`                                  | O(n)，非法字节替换为 U+FFFD |
+| `FromUtf8Error::into_bytes`                                | O(1)                        |
+| `String::into_bytes` / `as_bytes` / `as_str`               | O(1)                        |
+| `String::is_ascii` / `str::is_ascii`                       | O(n)                        |
+| ASCII 判定与 `to_ascii_*`（`char` / `u8`）                 | O(1)                        |
+| `char::to_lowercase` / `to_uppercase`                      | O(字符数)，可能分配         |
+| `String::from_iter` / `collect::<String>`                  | O(输出字节数) 时间/空间     |
+| `Vec::push`                                                | 均摊 O(1)                   |
+| `Vec::len` / `is_empty` / `capacity`                       | O(1)                        |
+| `Vec` 下标 `v[i]` / `first()` / `last()`                   | O(1)                        |
+| `vec![...]`                                                | O(n)，一次分配              |
+| `Vec::clone` / `slice::to_vec` / `to_owned`                | O(n) 时间，O(n) 空间        |
+| `Rc::clone` / `Arc::clone`                                 | O(1)，仅增加引用计数        |
+| `slice::get` / `Vec::get`                                  | O(1)                        |
+| `Iterator::count` / `nth(n)` / `skip(n)`                   | O(n)                        |
+| `zip` / `flat_map` / `chain` / `filter`                    | 每个元素 O(1)               |
+| `collect()`                                                | O(输出长度) + 可能的扩容    |
+| `str::repeat(n)`                                           | O(n·len)，一次分配          |
+| `slice::chunks` / `chunks_exact` / `windows`               | 每产生一个块 O(1)           |
+| `Iterator::all` / `any` / `eq`                             | O(n)，可提前短路            |
+| `Iterator::max` / `min` / `max_by` / `max_by_key`          | O(n)，O(1) 额外空间         |
+| `Iterator::copied` / `cloned`                              | 每个元素 O(1)               |
+| `slice::swap` / `std::mem::swap`                           | O(1)                        |
 
 ## 9. 易混点与陷阱
 
@@ -712,7 +791,10 @@ assert_eq!(x, y);
 - `iter().max()` / `iter().min()` 在空迭代器上返回 `None`，直接 `unwrap()` 会 panic。
 - `iter()` 的元素是 `&T`：`max()` 得到 `Option<&T>`，取出按值用 `&` 模式解构（要求 `Copy`）或 `copied()` / `cloned()`。
 - `v[0]` / `v[i]` 越界会 panic；不确定是否为空时用 `first()` / `get()`。
-- `v.len() - 1` 在空 `Vec` 上会下溢 panic（debug 构建），边界计算先 `is_empty()` 判空，或改写成 `i + 1 == v.len()` 这类不易越界的形式。
+- `v.len() - 1` 在空 `Vec` 上会下溢 panic（debug 构建），边界计算先判空，或用 `checked_sub(1)` / `saturating_sub(1)`。
+- `s.into_bytes()` 是 O(1) 的所有权移交，调用后原 `String` 不可再用；只想查看用 `as_bytes()`。
+- `String::from_utf8` 失败时数据不会丢失，`FromUtf8Error::into_bytes()` 可以把原 `Vec<u8>` 取回。
+- ASCII 数据用 `Vec<char>` 处理会多占约 4 倍内存；能按字节处理时优先按字节，且只交换 ASCII 字节不会破坏 UTF-8。
 - `clone()` 是否为深拷贝取决于类型实现：`Vec` / `String` 会复制堆数据，`Rc` / `Arc` 只增加引用计数。
 
 ## 10. 测试常用
@@ -749,7 +831,11 @@ mod tests {
 ## 11. 参考
 
 - [`std::string::String`](https://doc.rust-lang.org/std/string/struct.String.html)
+- [`std::string::FromUtf8Error`](https://doc.rust-lang.org/std/string/struct.FromUtf8Error.html)
 - [`str` primitive](https://doc.rust-lang.org/std/primitive.str.html)
+- [`char` primitive](https://doc.rust-lang.org/std/primitive.char.html)
+- [`u8` primitive](https://doc.rust-lang.org/std/primitive.u8.html)
+- [`matches!` macro](https://doc.rust-lang.org/std/macro.matches.html)
 - [`std::str::Chars`](https://doc.rust-lang.org/std/str/struct.Chars.html)
 - [`std::iter::Iterator`](https://doc.rust-lang.org/std/iter/trait.Iterator.html)
 - [`std::option::Option`](https://doc.rust-lang.org/std/option/enum.Option.html)
