@@ -500,6 +500,7 @@ assert_eq!(double("21"), Ok(42));
 | `get(i)` / `get_mut(i)`                      | 安全下标，越界返回 `None`            |
 | `first()` / `last()`（及 `_mut` 版本）       | 首 / 尾元素，`Option<&T>`            |
 | `as_slice()`                                 | 借出 `&[T]`                          |
+| `clone()` / `to_vec()`                       | 深拷贝成新的 `Vec<T>`，O(n)          |
 | `chunks(n)` / `chunks_exact(n)`              | 连续分块；exact 丢弃不足 n 的尾块    |
 | `rchunks(n)` / `windows(n)`                  | 反向分块 / 定长滑动窗口              |
 | `swap(i, j)`                                 | 交换两个元素，O(1)                   |
@@ -599,6 +600,45 @@ assert_eq!(std::mem::replace(&mut n, 0), 5);
 assert_eq!(n, 0);
 ```
 
+### 7.2 克隆与复制：`clone` / `to_vec` / `Copy`
+
+| 写法                                | 说明                           | 复杂度               |
+| ----------------------------------- | ------------------------------ | -------------------- |
+| `v.clone()`                         | 克隆整个 `Vec`，元素逐个克隆   | O(n) 时间，O(n) 空间 |
+| `slice.to_vec()`                    | 由 `&[T]` 生成新的 `Vec<T>`    | O(n) 时间，O(n) 空间 |
+| `slice.to_owned()`                  | 同上，`ToOwned` 的惯用写法     | O(n) 时间，O(n) 空间 |
+| `s.clone()` / `s.to_string()`       | 复制字符串内容（`String`）     | O(n) 时间，O(n) 空间 |
+| `Rc::clone(&rc)` / `Arc::clone(&a)` | 只增加引用计数，不复制内部数据 | O(1)                 |
+
+```rust
+let a = vec![1, 2, 3];
+let b = a.clone(); // 深拷贝，a 仍然可用
+assert_eq!(a, b);
+
+let s: &[i32] = &a[..];
+let c = s.to_vec(); // 切片转成新的 Vec
+assert_eq!(c, a);
+
+let d = vec![String::from("hi")];
+let mut e = d.clone(); // 元素本身也会被克隆，两块内存互不影响
+e[0].push_str("!");
+assert_eq!(d[0], "hi");
+```
+
+`clone()` 是显式的「制作副本」，要求 `T: Clone`。`Copy` 类型（`i32`、`bool`、`char`、`&T` 等）赋值时直接按位复制，不需要 `clone()`；非 `Copy` 类型（`Vec`、`String`、`Box` 等）赋值默认是**移动**，原变量随后不可用：
+
+```rust
+let a = vec![1, 2, 3];
+let b = a; // 移动：a 不再可用
+// println!("{:?}", a); // 编译错误：use of moved value
+
+let x = 1;
+let y = x; // Copy：x 仍然可用
+assert_eq!(x, y);
+```
+
+注意 `clone()` 不一定深拷贝，语义由类型实现决定：`Vec` / `String` 复制堆数据，`Rc` / `Arc` 只是增加引用计数。需要从切片构造拥有所有权的副本时，优先用 `to_vec()` / `to_owned()` 表达意图。
+
 ## 8. 复杂度速查
 
 | 操作                                                       | 复杂度                   |
@@ -612,8 +652,11 @@ assert_eq!(n, 0);
 | `String::from_utf8`                                        | O(n) 校验，不复制缓冲    |
 | `String::into_bytes` / `as_bytes` / `as_str`               | O(1)                     |
 | `Vec::push`                                                | 均摊 O(1)                |
+| `Vec::len` / `is_empty` / `capacity`                       | O(1)                     |
 | `Vec` 下标 `v[i]` / `first()` / `last()`                   | O(1)                     |
 | `vec![...]`                                                | O(n)，一次分配           |
+| `Vec::clone` / `slice::to_vec` / `to_owned`                | O(n) 时间，O(n) 空间     |
+| `Rc::clone` / `Arc::clone`                                 | O(1)，仅增加引用计数     |
 | `slice::get` / `Vec::get`                                  | O(1)                     |
 | `Iterator::count` / `nth(n)` / `skip(n)`                   | O(n)                     |
 | `zip` / `flat_map` / `chain` / `filter`                    | 每个元素 O(1)            |
@@ -647,6 +690,8 @@ assert_eq!(n, 0);
 | `v.swap(i, j)` vs `std::mem::swap`                | 交换同一 slice 的两个元素 / 交换任意两个 `&mut`   |
 | `v[i]` vs `v.get(i)`                              | 越界 panic / 返回 `Option<&T>`                    |
 | `v[0]` vs `v.first()`                             | 空 Vec panic / 返回 `None`                        |
+| `v.clone()` vs `let b = v`                        | 显式复制、`v` 仍可用 / 非 `Copy` 类型是移动       |
+| `clone()` vs `Copy` 隐式复制                      | 需 `T: Clone`、可能分配 / 按位复制、不额外分配    |
 | `v.iter().max()` vs `v.into_iter().max()`         | 返回 `Option<&T>` / 返回 `Option<T>`              |
 | `Iterator::max()` vs `Ord::max()`                 | 迭代器极值，返回 `Option` / 两个值取较大者        |
 | `max()` vs `max_by_key(f)`                        | 直接比较元素 / 按投影出的键比较                   |
@@ -667,6 +712,8 @@ assert_eq!(n, 0);
 - `iter().max()` / `iter().min()` 在空迭代器上返回 `None`，直接 `unwrap()` 会 panic。
 - `iter()` 的元素是 `&T`：`max()` 得到 `Option<&T>`，取出按值用 `&` 模式解构（要求 `Copy`）或 `copied()` / `cloned()`。
 - `v[0]` / `v[i]` 越界会 panic；不确定是否为空时用 `first()` / `get()`。
+- `v.len() - 1` 在空 `Vec` 上会下溢 panic（debug 构建），边界计算先 `is_empty()` 判空，或改写成 `i + 1 == v.len()` 这类不易越界的形式。
+- `clone()` 是否为深拷贝取决于类型实现：`Vec` / `String` 会复制堆数据，`Rc` / `Arc` 只增加引用计数。
 
 ## 10. 测试常用
 
@@ -708,6 +755,7 @@ mod tests {
 - [`std::option::Option`](https://doc.rust-lang.org/std/option/enum.Option.html)
 - [`std::result::Result`](https://doc.rust-lang.org/std/result/enum.Result.html)
 - [`std::vec::Vec`](https://doc.rust-lang.org/std/vec/struct.Vec.html)
+- [`std::clone::Clone`](https://doc.rust-lang.org/std/clone/trait.Clone.html)
 - [`std::iter::FromIterator`](https://doc.rust-lang.org/std/iter/trait.FromIterator.html)
 - [`std::ops::Index`](https://doc.rust-lang.org/std/ops/trait.Index.html)
 - [`std::ops::Range`](https://doc.rust-lang.org/std/ops/struct.Range.html)

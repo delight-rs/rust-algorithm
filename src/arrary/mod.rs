@@ -1,3 +1,4 @@
+mod can_place_flowers;
 mod contains_duplicate;
 mod contains_nearby_duplicate;
 mod convert_sorted_array_to_binary_search_tree;
