@@ -1,2 +1,3 @@
 mod greatest_common_divisor_of_strings;
 mod merge_strings_alternately;
+mod reverse_vowels_of_a_string;
