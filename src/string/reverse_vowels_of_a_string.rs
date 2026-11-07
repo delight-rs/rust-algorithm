@@ -4,15 +4,40 @@ struct Solution {}
 
 impl Solution {
     pub fn reverse_vowels(s: String) -> String {
+        let mut bytes = s.into_bytes();
+
+        if bytes.len() <= 1 {
+            return String::from_utf8(bytes).unwrap();
+        }
+
+        let mut left = 0;
+        let mut right = bytes.len() - 1;
+
+        while left < right {
+            if !Self::is_vowel(bytes[left] as char) {
+                left += 1;
+            } else if !Self::is_vowel(bytes[right] as char) {
+                right -= 1;
+            } else {
+                bytes.swap(left, right);
+                left += 1;
+                right -= 1;
+            }
+        }
+
+        String::from_utf8(bytes).unwrap()
+    }
+
+    pub fn reverse_vowels_2(s: String) -> String {
         let mut chars: Vec<char> = s.chars().collect();
 
         let mut left = 0;
         let mut right = chars.len() - 1;
 
         while left < right {
-            if !Solution::is_vowel(chars[left]) {
+            if !Self::is_vowel(chars[left]) {
                 left += 1;
-            } else if !Solution::is_vowel(chars[right]) {
+            } else if !Self::is_vowel(chars[right]) {
                 right -= 1;
             } else {
                 chars.swap(left, right);
@@ -25,8 +50,14 @@ impl Solution {
     }
 
     fn is_vowel(c: char) -> bool {
-        let c = c.to_ascii_lowercase();
-        c == 'a' || c == 'e' || c == 'i' || c == 'o' || c == 'u'
+        match c {
+            'a' | 'A' => true,
+            'e' | 'E' => true,
+            'i' | 'I' => true,
+            'o' | 'O' => true,
+            'u' | 'U' => true,
+            _ => false,
+        }
     }
 }
 
