@@ -9,6 +9,7 @@ mod longest_common_prefix;
 mod majority_element;
 mod missing_number;
 mod move_zeroes;
+mod product_of_array_except_self;
 mod range_sum_query_immutable;
 mod single_number;
 mod summary_ranges;
