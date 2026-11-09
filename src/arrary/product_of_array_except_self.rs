@@ -4,18 +4,21 @@ struct Solution {}
 
 impl Solution {
     pub fn product_except_self(nums: Vec<i32>) -> Vec<i32> {
-        let mut result = Vec::with_capacity(nums.len());
+        let n = nums.len();
+        let mut result = vec![1; n];
 
-        for i in 0..nums.len() {
-            let mut acc = 1;
+        // 第一遍求 prefix = nums[0..i]
+        let mut prefix = 1;
+        for i in 0..n {
+            result[i] = prefix;
+            prefix *= nums[i];
+        }
 
-            for j in 0..nums.len() {
-                if j != i {
-                    acc *= nums[j];
-                }
-            }
-
-            result.push(acc);
+        // 第二遍求及最终结果 suffix = nums[i+1..n].rev()
+        let mut suffix = 1;
+        for i in (0..n).rev() {
+            result[i] *= suffix;
+            suffix *= nums[i];
         }
 
         result

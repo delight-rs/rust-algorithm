@@ -1,6 +1,6 @@
 # Rust 常用 API 笔记：字符串与迭代器
 
-> 主题：`String` / `&str`、字节缓冲与 ASCII 处理、迭代器适配器、`Option` / `Result`、`Vec` / slice、`mem` 的常用方法与易混点。
+> 主题：`String` / `&str`、字节缓冲与 ASCII 处理、迭代器适配器、`Option` / `Result`、`Vec` / slice、运算符与整数溢出、`mem` 的常用方法与易混点。
 > 示例都是最小片段，可以直接粘进 `#[test]` 里运行。
 
 ## 1. `String` 与 `&str`
@@ -330,6 +330,16 @@ let desc: Vec<i32> = (1..=3).rev().collect();
 assert_eq!(desc, vec![3, 2, 1]);
 ```
 
+`rev()` 只构造适配器，本身 O(1)；消费时反向逐个产出，总计 O(n)。它要求底层迭代器实现 `DoubleEndedIterator`（`Range`、slice 迭代器、`Chars` 都满足）。配套的消费方法是 `next_back()`（从尾部取一个，O(1)）和 `rfold()`（从右向左折叠，O(n)）：
+
+```rust
+let mut it = 1..=3;
+assert_eq!(it.next_back(), Some(3));
+
+let folded = (1..=4).rfold(0, |acc, x| acc * 10 + x);
+assert_eq!(folded, 4321); // 4 -> 43 -> 432 -> 4321
+```
+
 ### 5.3 `zip` 与 `chain`
 
 ```rust
@@ -566,6 +576,7 @@ assert_eq!(double("21"), Ok(42));
 | -------------------------------------------- | ------------------------------------ |
 | `Vec::new()` / `Vec::with_capacity(n)`       | 创建，后者预分配                     |
 | `vec![...]` / `vec![v; n]`                   | 由元素创建 / 重复 n 个（需 `Clone`） |
+| `reserve(n)` / `shrink_to_fit()`             | 额外预留容量 / 收缩到当前长度        |
 | `push(v)` / `pop()`                          | 尾部入栈 / 出栈                      |
 | `extend(iter)` / `extend_from_slice(&[T])`   | 追加迭代器 / 切片                    |
 | `v[i]`（`Index` / `IndexMut`）               | 直接下标，越界 panic                 |
@@ -606,6 +617,13 @@ assert_eq!(exact, vec![&data[0..2], &data[2..4]]); // 尾块 [5] 被丢弃
 let mut v = vec![1, 2, 3];
 v.swap(0, 2);
 assert_eq!(v, vec![3, 2, 1]);
+
+let mut v = vec![0; 4]; // 重复 4 个 0
+assert_eq!(v, vec![0, 0, 0, 0]);
+v.reserve(8); // 保证还能再放 8 个而不重新分配
+assert!(v.capacity() >= 12);
+v.shrink_to_fit(); // 尽可能收缩到当前长度
+assert!(v.capacity() >= v.len());
 ```
 
 下标索引（`Index` / `IndexMut`），越界会 panic：
@@ -647,7 +665,7 @@ for i in 0..v.len() {
 for (i, x) in v.iter().enumerate() { /* i: usize, x: &i32 */ }
 ```
 
-空 `Vec` 的 `0..v.len()` 是空范围，循环体不会执行；但直接写 `v[0]` 仍会 panic，需先判空或用 `first()`。含右端点的区间写作 `0..=n`。
+空 `Vec` 的 `0..v.len()` 是空范围，循环体不会执行；但直接写 `v[0]` 仍会 panic，需先判空或用 `first()`。含右端点的区间写作 `0..=n`；倒序遍历用 `(0..v.len()).rev()`（只产出下标）或 `v.iter().rev()`（产出 `&T`），两者都是 O(n)。
 
 `&str` 本身没有 `chunks`，先 `as_bytes()` 借出 `&[u8]` 再分块：
 
@@ -711,43 +729,93 @@ assert_eq!(x, y);
 
 注意 `clone()` 不一定深拷贝，语义由类型实现决定：`Vec` / `String` 复制堆数据，`Rc` / `Arc` 只是增加引用计数。需要从切片构造拥有所有权的副本时，优先用 `to_vec()` / `to_owned()` 表达意图。
 
-## 8. 复杂度速查
+## 8. 数值与运算符
 
-| 操作                                                       | 复杂度                      |
-| ---------------------------------------------------------- | --------------------------- |
-| `String::len` / `is_empty` / `capacity`                    | O(1)                        |
-| `String::chars().count()`                                  | O(n)                        |
-| `String::push` / `push_str` / `extend`                     | 均摊 O(1)                   |
-| `String::remove(i)` / `insert(i)` / `insert_str(i)`        | O(n)                        |
-| `String::replace_range` / `drain` / `retain` / `split_off` | O(n)                        |
-| `String::truncate` / `pop` / `clear`                       | O(1)                        |
-| `String::from_utf8`                                        | O(n) 校验，不复制缓冲       |
-| `String::from_utf8_unchecked`                              | O(1)，`unsafe`，需保证合法  |
-| `String::from_utf8_lossy`                                  | O(n)，非法字节替换为 U+FFFD |
-| `FromUtf8Error::into_bytes`                                | O(1)                        |
-| `String::into_bytes` / `as_bytes` / `as_str`               | O(1)                        |
-| `String::is_ascii` / `str::is_ascii`                       | O(n)                        |
-| ASCII 判定与 `to_ascii_*`（`char` / `u8`）                 | O(1)                        |
-| `char::to_lowercase` / `to_uppercase`                      | O(字符数)，可能分配         |
-| `String::from_iter` / `collect::<String>`                  | O(输出字节数) 时间/空间     |
-| `Vec::push`                                                | 均摊 O(1)                   |
-| `Vec::len` / `is_empty` / `capacity`                       | O(1)                        |
-| `Vec` 下标 `v[i]` / `first()` / `last()`                   | O(1)                        |
-| `vec![...]`                                                | O(n)，一次分配              |
-| `Vec::clone` / `slice::to_vec` / `to_owned`                | O(n) 时间，O(n) 空间        |
-| `Rc::clone` / `Arc::clone`                                 | O(1)，仅增加引用计数        |
-| `slice::get` / `Vec::get`                                  | O(1)                        |
-| `Iterator::count` / `nth(n)` / `skip(n)`                   | O(n)                        |
-| `zip` / `flat_map` / `chain` / `filter`                    | 每个元素 O(1)               |
-| `collect()`                                                | O(输出长度) + 可能的扩容    |
-| `str::repeat(n)`                                           | O(n·len)，一次分配          |
-| `slice::chunks` / `chunks_exact` / `windows`               | 每产生一个块 O(1)           |
-| `Iterator::all` / `any` / `eq`                             | O(n)，可提前短路            |
-| `Iterator::max` / `min` / `max_by` / `max_by_key`          | O(n)，O(1) 额外空间         |
-| `Iterator::copied` / `cloned`                              | 每个元素 O(1)               |
-| `slice::swap` / `std::mem::swap`                           | O(1)                        |
+复合赋值运算符背后是 `std::ops` 中的 trait，基础数值类型均已实现，单次运算 O(1)：
 
-## 9. 易混点与陷阱
+| 表达式   | trait       | 说明                     |
+| -------- | ----------- | ------------------------ |
+| `a += b` | `AddAssign` | 加法赋值                 |
+| `a -= b` | `SubAssign` | 减法赋值                 |
+| `a *= b` | `MulAssign` | 乘法赋值                 |
+| `a /= b` | `DivAssign` | 除法赋值；整数除零 panic |
+| `a %= b` | `RemAssign` | 取余赋值；整数除零 panic |
+
+`v[i] *= k` 同时用到 `IndexMut`（见第 7 节）与 `MulAssign`，直接在原位置修改：
+
+```rust
+let mut v = vec![1, 2, 3];
+for i in 0..v.len() {
+    v[i] *= 2;
+}
+assert_eq!(v, vec![2, 4, 6]);
+```
+
+### 8.1 整数溢出
+
+`i32` 等整数的 `+`、`-`、`*` 溢出行为取决于构建配置：debug 构建 panic，release 构建默认按补码回绕（开启 `overflow-checks` 后同样会 panic）。需要与构建配置无关的行为时，改用显式方法：
+
+| 方法                   | 溢出时返回值        | 时间 |
+| ---------------------- | ------------------- | ---- |
+| `a.checked_mul(b)`     | `None`              | O(1) |
+| `a.saturating_mul(b)`  | `T::MAX` / `T::MIN` | O(1) |
+| `a.wrapping_mul(b)`    | 补码回绕后的值      | O(1) |
+| `a.overflowing_mul(b)` | `(值, 是否溢出)`    | O(1) |
+
+`checked_*`、`wrapping_*`、`overflowing_*` 对四则运算都有对应版本（如 `checked_add`、`wrapping_sub`）；`saturating_*` 覆盖 `+`、`-`、`*`、`/` 和 `pow`，没有 `saturating_rem`。
+
+```rust
+let x: i32 = 2_000_000_000;
+assert_eq!(x.checked_mul(2), None);
+assert_eq!(x.saturating_mul(2), i32::MAX);
+assert_eq!(x.wrapping_mul(2), -294_967_296);
+assert_eq!(x.overflowing_mul(2), (-294_967_296, true));
+```
+
+累加、累乘时若中间结果可能越界，优先用 `checked_*` 并显式处理 `None`，不要依赖 release 构建下的回绕结果。
+
+## 9. 复杂度速查
+
+| 操作                                                          | 复杂度                                             |
+| ------------------------------------------------------------- | -------------------------------------------------- |
+| `String::len` / `is_empty` / `capacity`                       | O(1)                                               |
+| `String::chars().count()`                                     | O(n)                                               |
+| `String::push` / `push_str` / `extend`                        | 均摊 O(1)                                          |
+| `String::remove(i)` / `insert(i)` / `insert_str(i)`           | O(n)                                               |
+| `String::replace_range` / `drain` / `retain` / `split_off`    | O(n)                                               |
+| `String::truncate` / `pop` / `clear`                          | O(1)                                               |
+| `String::from_utf8`                                           | O(n) 校验，不复制缓冲                              |
+| `String::from_utf8_unchecked`                                 | O(1)，`unsafe`，需保证合法                         |
+| `String::from_utf8_lossy`                                     | O(n)，非法字节替换为 U+FFFD                        |
+| `FromUtf8Error::into_bytes`                                   | O(1)                                               |
+| `String::into_bytes` / `as_bytes` / `as_str`                  | O(1)                                               |
+| `String::is_ascii` / `str::is_ascii`                          | O(n)                                               |
+| ASCII 判定与 `to_ascii_*`（`char` / `u8`）                    | O(1)                                               |
+| `char::to_lowercase` / `to_uppercase`                         | O(字符数)，可能分配                                |
+| `String::from_iter` / `collect::<String>`                     | O(输出字节数) 时间/空间                            |
+| `Vec::push`                                                   | 均摊 O(1)                                          |
+| `Vec::len` / `is_empty` / `capacity`                          | O(1)                                               |
+| `Vec::with_capacity` / `reserve` / `shrink_to_fit`            | `with_capacity` 一次分配；后两者重分配时 O(n) 复制 |
+| `Vec` 下标 `v[i]` / `first()` / `last()`                      | O(1)                                               |
+| `vec![...]` / `vec![v; n]`                                    | O(n) 时间/空间，一次分配                           |
+| `Vec::clone` / `slice::to_vec` / `to_owned`                   | O(n) 时间，O(n) 空间                               |
+| `Rc::clone` / `Arc::clone`                                    | O(1)，仅增加引用计数                               |
+| `slice::get` / `Vec::get`                                     | O(1)                                               |
+| `Iterator::count` / `nth(n)` / `skip(n)`                      | O(n)                                               |
+| `Iterator::rev`                                               | 构造 O(1)，消费 O(n)                               |
+| `Iterator::next_back` / `rfold`                               | O(1) / O(n)                                        |
+| `zip` / `flat_map` / `chain` / `filter`                       | 每个元素 O(1)                                      |
+| `collect()`                                                   | O(输出长度) + 可能的扩容                           |
+| `str::repeat(n)`                                              | O(n·len)，一次分配                                 |
+| `slice::chunks` / `chunks_exact` / `windows`                  | 每产生一个块 O(1)                                  |
+| `Iterator::all` / `any` / `eq`                                | O(n)，可提前短路                                   |
+| `Iterator::max` / `min` / `max_by` / `max_by_key`             | O(n)，O(1) 额外空间                                |
+| `Iterator::copied` / `cloned`                                 | 每个元素 O(1)                                      |
+| `slice::swap` / `std::mem::swap`                              | O(1)                                               |
+| 复合赋值 `+=` / `-=` / `*=` / `/=` / `%=`                     | O(1)                                               |
+| `checked_*` / `saturating_*` / `wrapping_*` / `overflowing_*` | O(1)                                               |
+
+## 10. 易混点与陷阱
 
 | 容易混淆                                          | 区别                                              |
 | ------------------------------------------------- | ------------------------------------------------- |
@@ -758,6 +826,8 @@ assert_eq!(x, y);
 | `remove` vs `truncate`                            | 返回被删字符 / 直接截断无返回值                   |
 | `push` vs `push_str` vs `extend` vs `+=`          | 单个 `char` / `&str` / 迭代器 / `AddAssign<&str>` |
 | `with_capacity` vs `reserve`                      | 创建时分配 / 对已有容器追加容量                   |
+| `vec![x; n]` vs `(0..n).map(...)`                 | 表达式只求值一次并克隆 / 每个元素分别求值         |
+| `checked_mul` vs `wrapping_mul`                   | 溢出返回 `None` / 显式按补码回绕                  |
 | `map` vs `flat_map` vs `flatten`                  | 一对一 / 映射后展平 / 展平已有可迭代元素          |
 | `zip` vs `chain`                                  | 并行配对取短 / 串行拼接取全部                     |
 | `skip(n)` vs `take(n)` vs `nth(n)`                | 跳过 n / 取前 n / 取第 n 个（并消费前面所有元素） |
@@ -796,8 +866,11 @@ assert_eq!(x, y);
 - `String::from_utf8` 失败时数据不会丢失，`FromUtf8Error::into_bytes()` 可以把原 `Vec<u8>` 取回。
 - ASCII 数据用 `Vec<char>` 处理会多占约 4 倍内存；能按字节处理时优先按字节，且只交换 ASCII 字节不会破坏 UTF-8。
 - `clone()` 是否为深拷贝取决于类型实现：`Vec` / `String` 会复制堆数据，`Rc` / `Arc` 只增加引用计数。
+- `vec![expr; n]` 只对 `expr` 求值一次，然后把结果克隆 n 份；表达式带副作用时不要期待执行 n 次。
+- 整数溢出行为取决于构建配置：debug 构建 panic，release 构建默认回绕；需要确定行为时用 `checked_*` / `saturating_*` / `wrapping_*`。
+- `rev()` 只适用于 `DoubleEndedIterator`；只实现了 `Iterator` 的迭代器不能直接反向。
 
-## 10. 测试常用
+## 11. 测试常用
 
 | API                                                     | 说明                                 |
 | ------------------------------------------------------- | ------------------------------------ |
@@ -826,9 +899,9 @@ mod tests {
 }
 ```
 
-子模块可以通过 `super::` 访问父模块的项（包括私有项），通常用 `use super::*;` 简化路径。
+子模块可以通过 `super::` 访问父模块的项（包括私有项），通常用 `use super::*;` 简化路径；只用到单个类型时，也可以写 `use super::MyType;`。比较两个 `Vec` 或数组切片时可以直接用 `assert_eq!`，`Vec<T>` 实现了 `PartialEq`，断言失败会通过 `Debug` 打印两边内容。
 
-## 11. 参考
+## 12. 参考
 
 - [`std::string::String`](https://doc.rust-lang.org/std/string/struct.String.html)
 - [`std::string::FromUtf8Error`](https://doc.rust-lang.org/std/string/struct.FromUtf8Error.html)
@@ -844,5 +917,7 @@ mod tests {
 - [`std::clone::Clone`](https://doc.rust-lang.org/std/clone/trait.Clone.html)
 - [`std::iter::FromIterator`](https://doc.rust-lang.org/std/iter/trait.FromIterator.html)
 - [`std::ops::Index`](https://doc.rust-lang.org/std/ops/trait.Index.html)
+- [`std::ops::MulAssign`](https://doc.rust-lang.org/std/ops/trait.MulAssign.html)
 - [`std::ops::Range`](https://doc.rust-lang.org/std/ops/struct.Range.html)
+- [`i32` primitive](https://doc.rust-lang.org/std/primitive.i32.html)
 - [`itertools::Itertools`](https://docs.rs/itertools/latest/itertools/trait.Itertools.html)
