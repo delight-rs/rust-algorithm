@@ -1,7 +1,7 @@
 # 【算法名称】：解法分析笔记
 
 > 题源：【题目链接；没有则写「无」】
-> 实现：`【源文件项目相对路径】`
+> 实现：`【github源文件项目绝对对路径】` 如(https://github.com/delight-rs/rust-algorithm/blob/main/src/arrary/product_of_array_except_self.rs)
 > 一句话概括：【用一句话说明核心技巧与复杂度】
 
 ## 1. 输入与输出

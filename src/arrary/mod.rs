@@ -3,6 +3,7 @@ mod contains_duplicate;
 mod contains_nearby_duplicate;
 mod convert_sorted_array_to_binary_search_tree;
 mod find_all_numbers_disappeared_in_an_array;
+mod increasing_triplet_subsequence;
 mod intersection_of_two_arrays_ii;
 mod kids_with_the_greatest_number_of_candies;
 mod longest_common_prefix;

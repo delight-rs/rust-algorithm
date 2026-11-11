@@ -1,7 +1,7 @@
 # 除自身以外数组的乘积：解法分析笔记
 
 > 题源：[LeetCode 238 - Product of Array Except Self](https://leetcode.com/problems/product-of-array-except-self/)
-> 实现：`src/arrary/product_of_array_except_self.rs`
+> 实现：https://github.com/delight-rs/rust-algorithm/blob/main/src/arrary/product_of_array_except_self.rs
 > 一句话概括：用两遍扫描把「除自己外的乘积」拆成「左边前缀积 × 右边后缀积」，时间 O(n)，除输出外只多用 O(1) 空间。
 
 ## 1. 输入与输出
