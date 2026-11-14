@@ -5,14 +5,36 @@ struct Solution {}
 
 impl Solution {
     pub fn increasing_triplet(nums: Vec<i32>) -> bool {
+        let mut first_big = i32::MAX;
+        let mut second_big = i32::MAX;
+
+        for n in nums {
+            if n > second_big {
+                return true;
+            } else if n > first_big {
+                second_big = n;
+            } else {
+                first_big = n;
+            }
+        }
+
+        false
+    }
+
+    // Brute Force Solution
+    pub fn increasing_triplet_2(nums: Vec<i32>) -> bool {
         if nums.len() < 3 {
             return false;
         }
 
         for i in 0..nums.len() {
-            if i + 2 < nums.len() {
-                if nums[i] < nums[i + 1] && nums[i + 1] < nums[i + 2] {
-                    return true;
+            for j in i + 1..nums.len() {
+                if nums[i] < nums[j] {
+                    for k in j + 1..nums.len() {
+                        if nums[j] < nums[k] {
+                            return true;
+                        }
+                    }
                 }
             }
         }
@@ -77,7 +99,7 @@ mod test {
 
     #[test]
     fn test_increasing_triplet_non_consecutive_indices() {
-        assert!(Solution::increasing_triplet(vec![1, 5, 2, 6]));
+        assert!(Solution::increasing_triplet(vec![5, 6, 3, 1, 0, 2, 3]));
     }
 
     #[test]
