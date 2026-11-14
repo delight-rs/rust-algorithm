@@ -5,16 +5,16 @@ struct Solution {}
 
 impl Solution {
     pub fn increasing_triplet(nums: Vec<i32>) -> bool {
-        let mut first_big = i32::MAX;
-        let mut second_big = i32::MAX;
+        let mut first = i32::MAX;
+        let mut second = i32::MAX;
 
         for n in nums {
-            if n > second_big {
+            if n > second {
                 return true;
-            } else if n > first_big {
-                second_big = n;
+            } else if n > first {
+                second = n;
             } else {
-                first_big = n;
+                first = n;
             }
         }
 
