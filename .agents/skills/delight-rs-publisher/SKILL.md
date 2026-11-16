@@ -140,26 +140,26 @@ description: 围绕开源个人品牌 delight-rs，为一篇技术文章生成 C
 
 > 💡 **完整源码与单元测试获取**
 > 本文涉及的 {技术词} 完整 Rust 实现、边界条件处理与全套 `#[test]` 单元测试，均已收录在开源仓库中，欢迎自取或点个 Star 支持：
-> 👉 GitHub 地址：https://github.com/delight-rs/rust-algorithm
+> 👉 GitHub 地址：<https://github.com/delight-rs/rust-algorithm>
 
 #### 掘金（强调系列专栏与工程美学）
 
 > 🛠️ **关于《Rust 算法硬核拆解》系列**
-> 本系列致力于用最地道的 Rust 写法拆解经典算法，拒绝「能跑就行」，追求极致的内存安全、复杂度证明与工程级测试覆盖。仓库持续更新中，如果这篇笔记对你有启发，欢迎来 GitHub 点个 **Star** 一起交流：https://github.com/delight-rs/rust-algorithm
+> 本系列致力于用最地道的 Rust 写法拆解经典算法，拒绝「能跑就行」，追求极致的内存安全、复杂度证明与工程级测试覆盖。仓库持续更新中，如果这篇笔记对你有启发，欢迎来 GitHub 点个 **Star** 一起交流：<https://github.com/delight-rs/rust-algorithm>
 
 #### 知乎（强调硬核共识与开源共建）
 
-> 写算法题解很容易，但要把「{技术痛点}」讲清楚并不容易。我把这些带严谨证明和完整单测的 Rust 代码都整理在了 GitHub 开源项目 **delight-rs/rust-algorithm** 里（搜索仓库名即可直达：https://github.com/delight-rs/rust-algorithm）。如果你也喜欢这种死磕细节的硬核风格，欢迎点个 Star 交个朋友。
+> 写算法题解很容易，但要把「{技术痛点}」讲清楚并不容易。我把这些带严谨证明和完整单测的 Rust 代码都整理在了 GitHub 开源项目 **delight-rs/rust-algorithm** 里（搜索仓库名即可直达：<https://github.com/delight-rs/rust-algorithm>）。如果你也喜欢这种死磕细节的硬核风格，欢迎点个 Star 交个朋友。
 
 #### 博客园（强调归档与纯粹交流）
 
 > **源码归档**
-> 本文代码已归档至个人 Rust 算法练习仓库：https://github.com/delight-rs/rust-algorithm ，欢迎查阅或通过 Issue 交流更优解。
+> 本文代码已归档至个人 Rust 算法练习仓库：<https://github.com/delight-rs/rust-algorithm> ，欢迎查阅或通过 Issue 交流更优解。
 
 #### 阿里云开发者社区（强调标准化工程规范）
 
 > **开源实践参考**
-> 上述算法的标准工程实现及自动化测试用例已同步至开源代码库 https://github.com/delight-rs/rust-algorithm ，可供 Rust 开发者在生产环境处理同类 {场景} 时参考。
+> 上述算法的标准工程实现及自动化测试用例已同步至开源代码库 <https://github.com/delight-rs/rust-algorithm> ，可供 Rust 开发者在生产环境处理同类 {场景} 时参考。
 
 ### 5. 通用标签（5 个）
 
@@ -181,6 +181,17 @@ description: 围绕开源个人品牌 delight-rs，为一篇技术文章生成 C
 - 标题与 CTA 中出现的题号、复杂度、亮点，必须与输入内容一致。
 - 平台顺序固定：CSDN、掘金、知乎、博客园、阿里云。
 
+## 参考模板
+
+完整的产出结构见 `templates/publish-copy-template.md`，其中以《LeetCode 283 移动零》为例填好了卖点、五平台标题/摘要/CTA 与标签，并标注了实测字数。
+
+使用要点：
+
+- 先完成「内容解构四要素」，再对照模板逐平台替换题号、题名、技术词、亮点、复杂度与场景；
+- 标题、摘要、CTA 三处的题号与复杂度必须保持一致，替换后按各平台长度上限重新数字数；
+- CTA 中的 `{技术词}`、`{技术痛点}`、`{场景}` 变量需替换为当篇内容，并保留仓库地址与 Star 邀请；模板中 `<https://...>` 的尖括号是 Markdown 源码写法，发布输出时去掉尖括号；
+- 模板只是结构提示，不必逐字照抄；不得为了套模板而编造原文没有的题号或亮点。
+
 ## 校验
 
 - [ ] 五个平台各 2 个标题，稳健款符合平台公式，进阶款与稳健款实质差异化。
@@ -190,7 +201,7 @@ description: 围绕开源个人品牌 delight-rs，为一篇技术文章生成 C
 - [ ] 标签恰为 5 个，且与文章内容相关。
 - [ ] 题号、题名、技术词与输入内容一致，未编造。
 - [ ] 标题与 CTA 无夸大词、无营销违规词。
-- [ ] 输出按「卖点 → 标题、摘要与 CTA → 标签」结构排列，可直接复制。
+- [ ] 输出按「卖点 → 标题、摘要与 CTA → 标签」结构排列，可直接复制，结构对齐 `templates/publish-copy-template.md`。
 
 ## 汇报格式
 
