@@ -15,7 +15,7 @@ impl Solution {
             map.entry(n).and_modify(|x| *x += 1).or_insert(1);
         }
 
-        let result = map.iter().find(|(key, v)| v > &&count).unwrap();
+        let result = map.iter().find(|(_key, v)| v > &&count).unwrap();
         *result.0
     }
 

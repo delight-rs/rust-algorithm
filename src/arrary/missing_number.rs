@@ -1,7 +1,7 @@
 //! 丢失的数字
 //! https://leetcode.cn/problems/missing-number/description/?envType=problem-list-v2&envId=xulyhlrg
 
-use std::{collections::HashSet, num};
+use std::collections::HashSet;
 
 struct Solution;
 
@@ -55,7 +55,7 @@ impl Solution {
         }
 
         for n in 0..=lenght {
-            result ^= (n as i32);
+            result ^= n as i32;
         }
 
         result
