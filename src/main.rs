@@ -2,6 +2,7 @@
 
 mod arrary;
 mod string;
+mod two_pointers;
 
 trait IpAddr {
     fn diplay(&self);

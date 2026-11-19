@@ -176,6 +176,17 @@ assert_eq!("".repeat(10), "");
 assert_eq!("x".repeat(0), "");
 ```
 
+`to_string()` 来自 `ToString` trait，任何实现 `Display` 的类型都能调用；对 `&str` 来说 `to_owned()` 与 `to_string()` 结果相同，但前者走 `ToOwned`、直接复制，后者走格式化：
+
+```rust
+let a: String = "hi".to_string(); // ToString，要求 Display
+let b: String = "hi".to_owned();  // ToOwned，借用的拥有版本
+assert_eq!(a, b);
+assert_eq!(42.to_string(), "42");
+```
+
+两者都是 O(n) 时间与 O(n) 空间，n 为结果字节数。
+
 ### 2.1 与字节缓冲互转
 
 `String` 与 `Vec<u8>` 可以**零拷贝**地互相转换，只是方向不同：
@@ -261,14 +272,14 @@ let mut s = String::from("é");
 
 ## 4. 字符与字节遍历
 
-| API               | 产出            | 说明                                   |
-| ----------------- | --------------- | -------------------------------------- |
-| `chars()`         | `char`          | 按 UTF-8 解码逐字符                    |
-| `char_indices()`  | `(usize, char)` | 字符及其起始字节偏移                   |
-| `bytes()`         | `u8`            | 原始字节，不做解码                     |
-| `as_bytes()`      | `&[u8]`         | 零拷贝借出字节切片，可用 slice 方法    |
-| `chars().rev()`   | `char`          | 反向，`Chars` 是 `DoubleEndedIterator` |
-| `Chars::as_str()` | `&str`          | 返回**尚未消费**的剩余片段             |
+| API               | 产出            | 说明                                                    |
+| ----------------- | --------------- | ------------------------------------------------------- |
+| `chars()`         | `char`          | 按 UTF-8 解码逐字符                                     |
+| `char_indices()`  | `(usize, char)` | 字符及其起始字节偏移                                    |
+| `bytes()`         | `u8`            | 原始字节，不做解码                                      |
+| `as_bytes()`      | `&[u8]`         | 零拷贝借出字节切片，可用 slice 方法；遍历时元素是 `&u8` |
+| `chars().rev()`   | `char`          | 反向，`Chars` 是 `DoubleEndedIterator`                  |
+| `Chars::as_str()` | `&str`          | 返回**尚未消费**的剩余片段                              |
 
 这些迭代器构造都是 O(1)，完整遍历为 O(n) 时间与 O(1) 额外空间；`as_bytes()` 只是借出切片，O(1)。
 
@@ -332,6 +343,54 @@ assert!(!is_hex('g'));
 | `as_bytes()`               | 只读分析                          | O(n) | O(1)             | 借出字节切片，不能直接修改          |
 
 只交换 ASCII 字节是安全的：多字节序列的每个字节都 ≥ 0x80，不会被 ASCII 判定命中，也不会被移动，因此结果仍是合法 UTF-8。若输入不保证 ASCII、又需要按字符语义处理，优先选 `Vec<char>`。
+
+### 4.3 借出 `&[u8]` 后的遍历与下标
+
+`as_bytes()` 返回 `&[u8]`，它本身不是迭代器；直接写进 `for` 时迭代的是切片元素，类型为 `&u8`。`String` 通过 `Deref` 调用 `str` 上的这些方法，不需要先 `as_str()`：
+
+```rust
+let s = String::from("ab");
+for b in s.as_bytes() {
+    assert!(*b == b'a' || *b == b'b'); // b: &u8
+}
+assert_eq!(s.as_bytes().len(), 2);
+assert_eq!(s.as_bytes().get(0), Some(&b'a'));
+```
+
+`bytes()` 则是迭代器，按值产出 `u8`：
+
+```rust
+let mut it = "ab".bytes();
+assert_eq!(it.next(), Some(b'a'));
+assert_eq!(it.next(), Some(b'b'));
+assert_eq!(it.next(), None);
+```
+
+| 写法                    | 产出          | 说明                      | 时间                 | 空间 |
+| ----------------------- | ------------- | ------------------------- | -------------------- | ---- |
+| `for b in s.as_bytes()` | `&u8`         | 遍历借出的字节切片        | O(n)                 | O(1) |
+| `s.as_bytes()[i]`       | `u8`          | 直接下标，越界 panic      | O(1)                 | O(1) |
+| `s.as_bytes().get(i)`   | `Option<&u8>` | 安全下标，越界返回 `None` | O(1)                 | O(1) |
+| `s.bytes()`             | `u8`          | 迭代器，按值产出字节      | 构造 O(1)，消费 O(n) | O(1) |
+
+需要切片方法（`len`、`get`、`windows`、`chunks`、`split_at`）时先 `as_bytes()`；只做流式字节处理时用 `bytes()`，可以省去解引用。
+
+`get` 接受下标或范围：`get(i)` 返回 `Option<&u8>`，`get(a..b)` 返回 `Option<&[u8]>`。它与另一个 `&u8` 比较时可直接写 `== Some(b)`；与字面量比较则要先取引用，写成 `Some(&b'x')`。用 `while let` 配合 `get` 可以在不预先判断上界的情况下扫到第一个目标，越界时循环自然结束：
+
+```rust
+let data = "abc";
+let mut i = 0;
+while let Some(&b) = data.as_bytes().get(i) {
+    if b == b'c' {
+        break;
+    }
+    i += 1;
+}
+assert_eq!(i, 2);
+assert_eq!("abc".as_bytes().get(1..), Some(&b"bc"[..]));
+```
+
+模式 `Some(&b)` 把 `Option<&u8>` 直接解构成 `u8`；若写成 `Some(b)`，`b` 仍是 `&u8`。
 
 ## 5. 分割、拼接与格式化
 
@@ -854,30 +913,30 @@ assert_eq!(double("21"), Ok(42));
 
 ## 8. `Vec` 与 slice
 
-| API                                          | 说明                                            |
-| -------------------------------------------- | ----------------------------------------------- |
-| `Vec::new()` / `Vec::with_capacity(n)`       | 创建，后者预分配                                |
-| `vec![...]` / `vec![v; n]`                   | 由元素创建 / 重复 n 个（需 `Clone`）            |
-| `reserve(n)` / `shrink_to_fit()`             | 额外预留容量 / 收缩到当前长度                   |
-| `push(v)` / `pop()`                          | 尾部入栈 / 出栈，摊销 O(1)                      |
-| `extend(iter)` / `extend_from_slice(&[T])`   | 追加迭代器 / 切片，O(m)                         |
-| `append(&mut other)`                         | 把另一个 `Vec` 的元素全部移入，O(m)，other 清空 |
-| `insert(i, x)` / `remove(i)`                 | 在 i 处插入 / 删除，O(n)，越界 panic            |
-| `resize(n, value)`                           | 调整长度，O(n)，需 `T: Clone`                   |
-| `dedup()`                                    | 删除**相邻**重复元素，O(n)                      |
-| `split_at(i)` / `split_at_mut(i)`            | 在 i 处切成两个切片，O(1)                       |
-| `v[i]`（`Index` / `IndexMut`）               | 直接下标，越界 panic                            |
-| `get(i)` / `get_mut(i)`                      | 安全下标，越界返回 `None`                       |
-| `first()` / `last()`（及 `_mut` 版本）       | 首 / 尾元素，`Option<&T>`                       |
-| `as_slice()`                                 | 借出 `&[T]`                                     |
-| `clone()` / `to_vec()`                       | 深拷贝成新的 `Vec<T>`，O(n)                     |
-| `contains(&x)`                               | 线性查找，O(n)                                  |
-| `chunks(n)` / `chunks_exact(n)`              | 连续分块；exact 丢弃不足 n 的尾块               |
-| `rchunks(n)` / `windows(n)`                  | 反向分块 / 定长滑动窗口                         |
-| `swap(i, j)`                                 | 交换两个元素，O(1)                              |
-| `len()` / `is_empty()` / `capacity()`        | 长度 / 判空 / 容量，O(1)                        |
-| `truncate(n)` / `retain(f)` / `drain(range)` | 截断 / 过滤 / 删除范围，O(n)                    |
-| `into_iter()` / `iter()` / `iter_mut()`      | 三种遍历方式                                    |
+| API                                          | 说明                                                          |
+| -------------------------------------------- | ------------------------------------------------------------- |
+| `Vec::new()` / `Vec::with_capacity(n)`       | 创建，后者预分配                                              |
+| `vec![...]` / `vec![v; n]`                   | 由元素创建 / 重复 n 个（需 `Clone`）                          |
+| `reserve(n)` / `shrink_to_fit()`             | 额外预留容量 / 收缩到当前长度                                 |
+| `push(v)` / `pop()`                          | 尾部入栈 / 出栈，摊销 O(1)                                    |
+| `extend(iter)` / `extend_from_slice(&[T])`   | 追加迭代器 / 切片，O(m)                                       |
+| `append(&mut other)`                         | 把另一个 `Vec` 的元素全部移入，O(m)，other 清空               |
+| `insert(i, x)` / `remove(i)`                 | 在 i 处插入 / 删除，O(n)，越界 panic                          |
+| `resize(n, value)`                           | 调整长度，O(n)，需 `T: Clone`                                 |
+| `dedup()`                                    | 删除**相邻**重复元素，O(n)                                    |
+| `split_at(i)` / `split_at_mut(i)`            | 在 i 处切成两个切片，O(1)                                     |
+| `v[i]`（`Index` / `IndexMut`）               | 直接下标，越界 panic                                          |
+| `get(i)` / `get_mut(i)`                      | 安全下标，返回 `Option<&T>` / `Option<&mut T>`，越界为 `None` |
+| `first()` / `last()`（及 `_mut` 版本）       | 首 / 尾元素，`Option<&T>`                                     |
+| `as_slice()`                                 | 借出 `&[T]`                                                   |
+| `clone()` / `to_vec()`                       | 深拷贝成新的 `Vec<T>`，O(n)                                   |
+| `contains(&x)`                               | 线性查找，O(n)                                                |
+| `chunks(n)` / `chunks_exact(n)`              | 连续分块；exact 丢弃不足 n 的尾块                             |
+| `rchunks(n)` / `windows(n)`                  | 反向分块 / 定长滑动窗口                                       |
+| `swap(i, j)`                                 | 交换两个元素，O(1)                                            |
+| `len()` / `is_empty()` / `capacity()`        | 长度 / 判空 / 容量，O(1)                                      |
+| `truncate(n)` / `retain(f)` / `drain(range)` | 截断 / 过滤 / 删除范围，O(n)                                  |
+| `into_iter()` / `iter()` / `iter_mut()`      | 三种遍历方式                                                  |
 
 未单独标注的方法均为 O(1) 结构操作；`extend` / `extend_from_slice` / `append` 为 O(m)（m 为追加元素数）；`insert` / `remove` / `truncate` / `retain` / `drain` / `resize` 为 O(n)；`clone` / `to_vec` 为 O(n) 时间与空间；`chunks` / `windows` 每产出一个块是 O(1)。排序与二分查找见第 9 节。
 
@@ -889,6 +948,7 @@ v.push(1);
 v.extend([2, 3]);
 v.extend_from_slice(&[4, 5]);
 assert_eq!(v.len(), 5);
+assert_eq!(v.get(0), Some(&1));
 assert_eq!(v.get(10), None);
 assert_eq!(v.as_slice(), &[1, 2, 3, 4, 5]);
 
@@ -1675,47 +1735,48 @@ assert_eq!(next.unwrap().borrow().val, 2);
 
 ## 14. 易混点与陷阱
 
-| 容易混淆                                          | 区别                                              |
-| ------------------------------------------------- | ------------------------------------------------- |
-| `len()` vs `chars().count()`                      | 字节数 O(1) / 字符数 O(n)，非 ASCII 不相等        |
-| `s[i]` vs `s.chars().nth(i)`                      | 前者不合法；后者按下标取字符，O(n)                |
-| `get(range)` vs `&s[range]`                       | 前者返回 `Option<&str>`，越界或非边界返回 `None`  |
-| `remove` vs `pop`                                 | 按下标删 O(n) / 删末尾 O(1)                       |
-| `remove` vs `truncate`                            | 返回被删字符 / 直接截断无返回值                   |
-| `push` vs `push_str` vs `extend` vs `+=`          | 单个 `char` / `&str` / 迭代器 / `AddAssign<&str>` |
-| `with_capacity` vs `reserve`                      | 创建时分配 / 对已有容器追加容量                   |
-| `vec![x; n]` vs `(0..n).map(...)`                 | 表达式只求值一次并克隆 / 每个元素分别求值         |
-| `checked_mul` vs `wrapping_mul`                   | 溢出返回 `None` / 显式按补码回绕                  |
-| `map` vs `flat_map` vs `flatten`                  | 一对一 / 映射后展平 / 展平已有可迭代元素          |
-| `zip` vs `chain`                                  | 并行配对取短 / 串行拼接取全部                     |
-| `skip(n)` vs `take(n)` vs `nth(n)`                | 跳过 n / 取前 n / 取第 n 个（并消费前面所有元素） |
-| `collect::<String>()` vs `collect::<Vec<char>>()` | 逐字符拼接 / 每个字符固定占 4 字节                |
-| `unwrap` vs `expect`                              | 都 panic，后者可带自定义信息                      |
-| `min(a, b)` vs `a.min(b)`                         | 前者需 `use std::cmp::min`；后者是 `Ord` 方法     |
-| `&String` vs `&str`                               | `Deref` 让 `&String` 可直接当 `&str` 传参         |
-| `chunks(n)` vs `chunks_exact(n)`                  | 保留不足 n 的尾块 / 丢弃尾块                      |
-| `v.swap(i, j)` vs `std::mem::swap`                | 交换同一 slice 的两个元素 / 交换任意两个 `&mut`   |
-| `v[i]` vs `v.get(i)`                              | 越界 panic / 返回 `Option<&T>`                    |
-| `v[0]` vs `v.first()`                             | 空 Vec panic / 返回 `None`                        |
-| `v.clone()` vs `let b = v`                        | 显式复制、`v` 仍可用 / 非 `Copy` 类型是移动       |
-| `clone()` vs `Copy` 隐式复制                      | 需 `T: Clone`、可能分配 / 按位复制、不额外分配    |
-| `v.iter().max()` vs `v.into_iter().max()`         | 返回 `Option<&T>` / 返回 `Option<T>`              |
-| `Iterator::max()` vs `Ord::max()`                 | 迭代器极值，返回 `Option` / 两个值取较大者        |
-| `max()` vs `max_by_key(f)`                        | 直接比较元素 / 按投影出的键比较                   |
-| `for i in 0..v.len()` vs `enumerate()`            | 下标循环 / 惯用的带下标遍历                       |
-| `all` vs `any`（空迭代器）                        | `all` 恒为 true，`any` 恒为 false                 |
-| `repeat(n)` vs 循环 `push_str`                    | 一次算出长度并分配 / 可能多次扩容                 |
-| `sort()` vs `sort_unstable()`                     | 稳定、额外 O(n) 空间 / 不稳定、通常更快           |
-| `binary_search` vs `contains`                     | 需有序、O(log n) / 无需有序、O(n)                 |
-| `split` vs `split_whitespace`                     | 按模式并保留空串 / 按 Unicode 空白并合并连续空白  |
-| `join` vs `concat`                                | 带分隔符 / 不带分隔符，均返回新 `String`          |
-| `HashMap::iter()` vs `BTreeMap::iter()`           | 任意顺序 / 按键升序                               |
-| `contains_key` + `insert` vs `entry`              | 两次查找 / 一次查找                               |
-| `set.insert(x)` vs `set.contains(&x)`             | 插入并返回是否新增 / 只判断是否存在               |
-| `BTreeSet::first()` vs `pop_first()`              | 借用 `Option<&T>` / 移除并返回 `Option<T>`        |
-| `Rc::clone` vs 内部值的 `clone`                   | 只增加引用计数 O(1) / 复制内部数据                |
-| `as` vs `TryFrom`                                 | 静默截断或回绕 / 可失败的受检转换                 |
-| `a >> 1` vs `a / 2`                               | 有符号数算术右移 / 向零截断，负数结果不同         |
+| 容易混淆                                          | 区别                                                 |
+| ------------------------------------------------- | ---------------------------------------------------- |
+| `len()` vs `chars().count()`                      | 字节数 O(1) / 字符数 O(n)，非 ASCII 不相等           |
+| `bytes()` vs `as_bytes()`                         | 迭代器，元素 `u8` / 借出切片 `&[u8]`，遍历得到 `&u8` |
+| `s[i]` vs `s.chars().nth(i)`                      | 前者不合法；后者按下标取字符，O(n)                   |
+| `get(range)` vs `&s[range]`                       | 前者返回 `Option<&str>`，越界或非边界返回 `None`     |
+| `remove` vs `pop`                                 | 按下标删 O(n) / 删末尾 O(1)                          |
+| `remove` vs `truncate`                            | 返回被删字符 / 直接截断无返回值                      |
+| `push` vs `push_str` vs `extend` vs `+=`          | 单个 `char` / `&str` / 迭代器 / `AddAssign<&str>`    |
+| `with_capacity` vs `reserve`                      | 创建时分配 / 对已有容器追加容量                      |
+| `vec![x; n]` vs `(0..n).map(...)`                 | 表达式只求值一次并克隆 / 每个元素分别求值            |
+| `checked_mul` vs `wrapping_mul`                   | 溢出返回 `None` / 显式按补码回绕                     |
+| `map` vs `flat_map` vs `flatten`                  | 一对一 / 映射后展平 / 展平已有可迭代元素             |
+| `zip` vs `chain`                                  | 并行配对取短 / 串行拼接取全部                        |
+| `skip(n)` vs `take(n)` vs `nth(n)`                | 跳过 n / 取前 n / 取第 n 个（并消费前面所有元素）    |
+| `collect::<String>()` vs `collect::<Vec<char>>()` | 逐字符拼接 / 每个字符固定占 4 字节                   |
+| `unwrap` vs `expect`                              | 都 panic，后者可带自定义信息                         |
+| `min(a, b)` vs `a.min(b)`                         | 前者需 `use std::cmp::min`；后者是 `Ord` 方法        |
+| `&String` vs `&str`                               | `Deref` 让 `&String` 可直接当 `&str` 传参            |
+| `chunks(n)` vs `chunks_exact(n)`                  | 保留不足 n 的尾块 / 丢弃尾块                         |
+| `v.swap(i, j)` vs `std::mem::swap`                | 交换同一 slice 的两个元素 / 交换任意两个 `&mut`      |
+| `v[i]` vs `v.get(i)`                              | 越界 panic / 返回 `Option<&T>`                       |
+| `v[0]` vs `v.first()`                             | 空 Vec panic / 返回 `None`                           |
+| `v.clone()` vs `let b = v`                        | 显式复制、`v` 仍可用 / 非 `Copy` 类型是移动          |
+| `clone()` vs `Copy` 隐式复制                      | 需 `T: Clone`、可能分配 / 按位复制、不额外分配       |
+| `v.iter().max()` vs `v.into_iter().max()`         | 返回 `Option<&T>` / 返回 `Option<T>`                 |
+| `Iterator::max()` vs `Ord::max()`                 | 迭代器极值，返回 `Option` / 两个值取较大者           |
+| `max()` vs `max_by_key(f)`                        | 直接比较元素 / 按投影出的键比较                      |
+| `for i in 0..v.len()` vs `enumerate()`            | 下标循环 / 惯用的带下标遍历                          |
+| `all` vs `any`（空迭代器）                        | `all` 恒为 true，`any` 恒为 false                    |
+| `repeat(n)` vs 循环 `push_str`                    | 一次算出长度并分配 / 可能多次扩容                    |
+| `sort()` vs `sort_unstable()`                     | 稳定、额外 O(n) 空间 / 不稳定、通常更快              |
+| `binary_search` vs `contains`                     | 需有序、O(log n) / 无需有序、O(n)                    |
+| `split` vs `split_whitespace`                     | 按模式并保留空串 / 按 Unicode 空白并合并连续空白     |
+| `join` vs `concat`                                | 带分隔符 / 不带分隔符，均返回新 `String`             |
+| `HashMap::iter()` vs `BTreeMap::iter()`           | 任意顺序 / 按键升序                                  |
+| `contains_key` + `insert` vs `entry`              | 两次查找 / 一次查找                                  |
+| `set.insert(x)` vs `set.contains(&x)`             | 插入并返回是否新增 / 只判断是否存在                  |
+| `BTreeSet::first()` vs `pop_first()`              | 借用 `Option<&T>` / 移除并返回 `Option<T>`           |
+| `Rc::clone` vs 内部值的 `clone`                   | 只增加引用计数 O(1) / 复制内部数据                   |
+| `as` vs `TryFrom`                                 | 静默截断或回绕 / 可失败的受检转换                    |
+| `a >> 1` vs `a / 2`                               | 有符号数算术右移 / 向零截断，负数结果不同            |
 
 常见陷阱：
 
@@ -1734,6 +1795,7 @@ assert_eq!(next.unwrap().borrow().val, 2);
 - `s.into_bytes()` 是 O(1) 的所有权移交，调用后原 `String` 不可再用；只想查看用 `as_bytes()`。
 - `String::from_utf8` 失败时数据不会丢失，`FromUtf8Error::into_bytes()` 可以把原 `Vec<u8>` 取回。
 - ASCII 数据用 `Vec<char>` 处理会多占约 4 倍内存；能按字节处理时优先按字节，且只交换 ASCII 字节不会破坏 UTF-8。
+- `s.as_bytes()` 返回切片而不是迭代器：`for b in s.as_bytes()` 中 `b` 是 `&u8`，而 `s.bytes()` 产出 `u8`，比较时注意解引用。
 - `clone()` 是否为深拷贝取决于类型实现：`Vec` / `String` 会复制堆数据，`Rc` / `Arc` 只增加引用计数。
 - `vec![expr; n]` 只对 `expr` 求值一次，然后把结果克隆 n 份；表达式带副作用时不要期待执行 n 次。
 - 整数溢出行为取决于构建配置：debug 构建 panic，release 构建默认回绕；需要确定行为时用 `checked_*` / `saturating_*` / `wrapping_*`。
